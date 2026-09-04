@@ -78,7 +78,8 @@ export function signRequest(input: SignInput): void {
   ].join("\n");
 
   const credentialScope = `${xDate.slice(0, 8)}/${region}/${service}/request`;
-  const stringToSign = ["HMAC-SHA256", xDate, sha256Hex(canonicalRequest)].join("\n");
+  // 四行结构：Algorithm / RequestDate / CredentialScope / CanonicalRequest哈希
+  const stringToSign = ["HMAC-SHA256", xDate, credentialScope, sha256Hex(canonicalRequest)].join("\n");
 
   const kDate = hmac(secretAccessKey, xDate.slice(0, 8));
   const kRegion = hmac(kDate, region);

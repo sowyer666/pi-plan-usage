@@ -166,21 +166,25 @@ export default function (pi: ExtensionAPI) {
     return false;
   }
 
-  /** /show-usage 参数自动补全：按当前输入的第几个参数给出候选 */
-  function argumentCompletions(argumentPrefix: string) {
+  /**
+   * /show-usage 参数候选项（供两套补全入口共用）。
+   * 返回 undefined = 当前输入不是 /show-usage 参数位。
+   */
+  function argumentCandidates(argumentPrefix: string):
+    | { items: { value: string; description: string }[]; current: string }
+    | undefined {
+    // 仅处理单行且以 /show-usage 开头的输入
     const typed = argumentPrefix.toLowerCase();
-    const parts = typed.split(/\s+/).filter(Boolean);
-    const completingNewToken = typed.endsWith(" ");
-    // 正在输入中的 token（光标前的最后一段）；补全新 token 时空串
+    if (!typed.startsWith("/show-usage")) return undefined;
+    const rest = typed.slice("/show-usage".length);
+    if (rest && !rest.startsWith(" ")) return undefined; // 还在敲命令名本身
+
+    const parts = rest.split(/\s+/).filter(Boolean);
+    const completingNewToken = rest.endsWith(" ") || rest === "";
     const current = completingNewToken ? "" : (parts[parts.length - 1] ?? "");
     const argIndex = completingNewToken ? parts.length : parts.length - 1;
 
-    // AutocompleteItem 要求 label（applyCompletion 会读 item.label），description 可选
-    const filter = (items: { value: string; description: string }[]) =>
-      items
-        .filter((i) => i.value.startsWith(current))
-        .map((i) => ({ value: i.value, label: i.value, description: i.description }));
-
+    const candidates = (): { value: string; description: string }[] => {
     // 第 1 个参数：特殊字 + 各 provider 短名
     if (argIndex === 0) {
       const items = [
@@ -192,33 +196,38 @@ export default function (pi: ExtensionAPI) {
         const plans = file.accounts.map((a) => String(a.planType).toLowerCase()).join("/");
         items.push({ value: file.shortName, description: `${providerIdFor(file.shortName)} (${plans})` });
       }
-      return filter(items);
+      return items;
     }
 
     // 第 2 个参数：该 provider 的套餐列表 + on/off
     if (argIndex === 1) {
       const first = parts[0] ?? "";
       const file = resolveProviderFile(first);
-      if (!file) return filter([{ value: "on", description: "Show" }, { value: "off", description: "Hide" }]);
+      if (!file) return [
+        { value: "on", description: "Show" },
+        { value: "off", description: "Hide" },
+      ];
       const items = file.accounts.map((a) => ({
         value: String(a.planType).toLowerCase(),
         description: a.label ?? String(a.planType),
       }));
       items.push({ value: "on", description: "Show all plans of this provider" });
       items.push({ value: "off", description: "Hide all plans of this provider" });
-      return filter(items);
+      return items;
     }
 
     // 第 3 个参数：显式 on / off
-    return filter([
+    return [
       { value: "on", description: "Show" },
       { value: "off", description: "Hide" },
-    ]);
+    ];
+    };
+
+    return { items: candidates().filter((i) => i.value.startsWith(current)), current };
   }
 
   pi.registerCommand("show-usage", {
     description: "Status bar plan usage: /show-usage [provider] [plan] [on|off] | all | off | status",
-    getArgumentCompletions: (argumentPrefix) => argumentCompletions(argumentPrefix),
     handler: async (args, ctx) => {
       const tokens = (args ?? "").trim().toLowerCase().split(/\s+/).filter(Boolean);
 
@@ -446,6 +455,51 @@ export default function (pi: ExtensionAPI) {
       clearInterval(refreshTimer);
       refreshTimer = undefined;
     }
+  });
+
+  // /show-usage 参数自动补全：自控 prefix（只替换正在输入的 token，保留已敲的其他参数）。
+  // 不用 getArgumentCompletions 是因为 pi 会把整个参数文本当 prefix，应用候选时会吞掉前参数。
+  pi.on("session_start", (_event, ctx) => {
+    if (ctx.mode !== "tui") return;
+
+    ctx.ui.addAutocompleteProvider((current) => ({
+      async getSuggestions(lines, cursorLine, cursorCol, options) {
+        const line = lines[cursorLine] ?? "";
+        const beforeCursor = line.slice(0, cursorCol);
+        // 只接管 /show-usage 开头的单行输入，其余委托给内置补全
+        if (!beforeCursor.startsWith("/show-usage")) {
+          return current.getSuggestions(lines, cursorLine, cursorCol, options);
+        }
+
+        // 光标前的参数区：/show-usage 之后的文本
+        const argsText = beforeCursor.slice("/show-usage".length);
+        const result = argumentCandidates(argsText);
+        if (!result || result.items.length === 0) {
+          return current.getSuggestions(lines, cursorLine, cursorCol, options);
+        }
+
+        // prefix = 当前正在输入的 token（replace 用），候选回车后替换它
+        return {
+          items: result.items.map((i) => ({ value: i.value, label: i.value, description: i.description })),
+          prefix: result.current,
+        };
+      },
+
+      applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
+        const line = lines[cursorLine] ?? "";
+        const before = line.slice(0, cursorCol - prefix.length);
+        const after = line.slice(cursorCol);
+        // 替换当前 token，尾随空格方便继续输入下一参数
+        const newLine = before + item.value + " " + after;
+        const newLines = [...lines];
+        newLines[cursorLine] = newLine;
+        return { lines: newLines, cursorLine, cursorCol: before.length + item.value.length + 1 };
+      },
+
+      shouldTriggerFileCompletion(lines, cursorLine, cursorCol) {
+        return current.shouldTriggerFileCompletion?.(lines, cursorLine, cursorCol) ?? true;
+      },
+    }));
   });
 
   pi.registerTool({

@@ -466,12 +466,13 @@ export default function (pi: ExtensionAPI) {
       async getSuggestions(lines, cursorLine, cursorCol, options) {
         const line = lines[cursorLine] ?? "";
         const beforeCursor = line.slice(0, cursorCol);
-        // 只接管 /show-usage 开头的单行输入，其余委托给内置补全
-        if (!beforeCursor.startsWith("/show-usage")) {
+
+        // 正在敲命令名本身（/、/s、/show…）：委托内置的命令列表
+        if (!beforeCursor.startsWith("/show-usage ")) {
           return current.getSuggestions(lines, cursorLine, cursorCol, options);
         }
 
-        // 光标前的参数区：/show-usage 之后的文本
+        // 已敲到参数区（/show-usage 之后，含尾随空格）
         const argsText = beforeCursor.slice("/show-usage".length);
         const result = argumentCandidates(argsText);
         if (!result || result.items.length === 0) {

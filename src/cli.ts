@@ -18,7 +18,7 @@ async function main(): Promise<void> {
     ? config.accounts.filter((a) => (a.label ?? "").includes(filter))
     : config.accounts;
   if (accounts.length === 0) {
-    console.error(`没有匹配的账号: ${filter}`);
+    console.error(`No matching account: ${filter}`);
     process.exit(1);
   }
 
@@ -39,6 +39,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((e) => {
-  console.error("查询失败:", e instanceof Error ? e.message : e);
+  console.error("Query failed:", e instanceof Error ? e.message : e);
   process.exit(1);
 });

@@ -47,10 +47,10 @@ export default function (pi: ExtensionAPI) {
     const config = loadConfig();
     const ttlMs = config.cacheTtlSeconds * 1000;
     const acc = config.accounts.find((a) => String(a.planType).toLowerCase() === planType);
-    if (!acc) return new Error(`配置中没有 ${planType} 账号`);
+    if (!acc) return new Error(`No ${planType} account in config`);
 
     const provider = registry.get("volcengine-ark");
-    if (!provider) return new Error("供应商 volcengine-ark 未注册");
+    if (!provider) return new Error("provider volcengine-ark not registered");
 
     const cred = provider.parseCredential(acc);
     const key = `${provider.id}:${planType}`;
@@ -74,13 +74,13 @@ export default function (pi: ExtensionAPI) {
       if (!enabled[plan]) continue;
       const snap = await queryPlan(plan, force);
       const tag = plan === "coding" ? "C" : "A";
-      parts.push(snap instanceof Error ? `${tag}:查询失败` : `${tag}:${formatCompactLine(snap)}`);
+      parts.push(snap instanceof Error ? `${tag}:query failed` : `${tag}:${formatCompactLine(snap)}`);
     }
     usageRightText = parts.join(" | ");
   }
 
   pi.registerCommand("show-usage", {
-    description: "开关状态栏用量显示：/show-usage [coding|agent|all]",
+    description: "Toggle plan usage display in the status bar: /show-usage [coding|agent|all]",
     handler: async (args, ctx) => {
       const arg = (args ?? "").trim().toLowerCase();
       if (!arg || arg === "all") {
@@ -91,7 +91,7 @@ export default function (pi: ExtensionAPI) {
       } else if (arg === "agent" || arg === "a") {
         enabled.agent = !enabled.agent;
       } else {
-        ctx.ui.notify("用法: /show-usage [coding|agent|all]", "info");
+        ctx.ui.notify("Usage: /show-usage [coding|agent|all]", "info");
         return;
       }
 
@@ -105,12 +105,12 @@ export default function (pi: ExtensionAPI) {
         await refreshUsageText();
         ctx.ui.notify(
           enabled.coding || enabled.agent
-            ? `用量显示: ${[enabled.coding ? "coding" : null, enabled.agent ? "agent" : null].filter(Boolean).join(" + ")}`
-            : "用量显示已全部关闭",
+            ? `Usage display: ${[enabled.coding ? "coding" : null, enabled.agent ? "agent" : null].filter(Boolean).join(" + ")}`
+            : "Usage display turned off",
           "info",
         );
       } catch (e) {
-        ctx.ui.notify(`查询失败: ${e instanceof Error ? e.message : String(e)}`, "error");
+        ctx.ui.notify(`Query failed: ${e instanceof Error ? e.message : String(e)}`, "error");
       }
     },
   });
@@ -253,12 +253,12 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "query_usage",
-    label: "查询套餐用量",
+    label: "Query plan usage",
     description:
-      "查询火山引擎 Coding Plan / Agent Plan 套餐用量（5小时窗口/日/周/月额度、已用、重置时间）。" +
-      "account 可选，为配置中的账号 label（如\"火山Coding\"），缺省查询全部账号。",
+      "Query Volcengine Ark Coding Plan / Agent Plan quota usage (5h/day/week/month windows, used quota, reset time). " +
+      "account is optional, the account label in config (e.g. \"火山Coding\"), defaults to all accounts.",
     parameters: Type.Object({
-      account: Type.Optional(Type.String({ description: "账号 label 过滤（包含匹配）" })),
+      account: Type.Optional(Type.String({ description: "Filter by account label (substring match)" })),
     }),
     async execute(_toolCallId, params, _signal) {
       try {
@@ -268,7 +268,7 @@ export default function (pi: ExtensionAPI) {
           ? config.accounts.filter((a) => (a.label ?? "").includes(filter))
           : config.accounts;
         if (accounts.length === 0) {
-          return { content: [{ type: "text", text: `未找到匹配的账号: ${filter}` }], details: {} };
+          return { content: [{ type: "text", text: `No matching account: ${filter}` }], details: {} };
         }
 
         const parts: string[] = [];
@@ -276,7 +276,7 @@ export default function (pi: ExtensionAPI) {
           accounts.map(async (acc) => {
             const provider = registry.get("volcengine-ark");
             if (!provider) {
-              parts.push(`❌ 账号[${acc.label ?? acc.planType}]: 供应商 volcengine-ark 未注册`);
+              parts.push(`❌ Account[${acc.label ?? acc.planType}]: provider volcengine-ark not registered`);
               return;
             }
             const cred = provider.parseCredential(acc);
@@ -303,7 +303,7 @@ export default function (pi: ExtensionAPI) {
       } catch (e) {
         return {
           content: [
-            { type: "text", text: `查询失败: ${e instanceof Error ? e.message : String(e)}` },
+            { type: "text", text: `Query failed: ${e instanceof Error ? e.message : String(e)}` },
           ],
           details: {},
           isError: true,

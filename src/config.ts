@@ -30,13 +30,13 @@ export function loadConfig(): PluginConfig {
   const path = join(pluginRoot(), "config", "volcengine.json");
   if (!existsSync(path)) {
     throw new Error(
-      `配置文件不存在: ${path}\n请复制 config/volcengine.example.json 为 config/volcengine.json 并填写 AK/SK`,
+      `Config file not found: ${path}\nCopy config/volcengine.example.json to config/volcengine.json and fill in AK/SK`,
     );
   }
   const raw = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
   const accounts = (Array.isArray(raw.accounts) ? raw.accounts : []) as VolcengineAccountConfig[];
   if (accounts.length === 0) {
-    throw new Error("config/volcengine.json 中 accounts 为空");
+    throw new Error("config/volcengine.json: accounts is empty");
   }
   return {
     accounts,

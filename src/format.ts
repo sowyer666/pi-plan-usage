@@ -36,7 +36,7 @@ export function relativeTime(iso: string, daysOnly = false): string {
   } else {
     span = d > 0 ? `${d}d${h}h` : h > 0 ? `${h}h${m}m` : `${m}m`;
   }
-  return diff >= 0 ? span : `${span}前`;
+  return diff >= 0 ? span : `${span} ago`;
 }
 
 /** 窗口描述：如 "320/1200 · 4h12m重置" 或 "42%" */
@@ -51,9 +51,9 @@ export function describeWindow(w: UsageWindow): string {
   }
   if (w.resetAt) {
     const rt = relativeTime(w.resetAt);
-    if (rt) parts.push(`${rt}重置`);
+    if (rt) parts.push(`reset in ${rt}`);
   }
-  return parts.join(" · ");
+  return parts.join(" ");
 }
 
 function pad(s: string, n: number): string {
@@ -63,11 +63,11 @@ function pad(s: string, n: number): string {
 /** 快照 → 边栏多行文本 */
 export function formatWidgetLines(snapshot: UsageSnapshot): string[] {
   const lines: string[] = [];
-  const head = `📊 ${snapshot.accountLabel}（${snapshot.planType}${snapshot.tier ? " · " + snapshot.tier : ""}）`;
+  const head = `📊 ${snapshot.accountLabel} (${snapshot.planType}${snapshot.tier ? " · " + snapshot.tier : ""})`;
   lines.push(head);
 
   if (!snapshot.subscribed) {
-    lines.push("  未订阅套餐或无用量数据");
+    lines.push("  No active plan");
     return lines;
   }
 
@@ -79,7 +79,7 @@ export function formatWidgetLines(snapshot: UsageSnapshot): string[] {
 
 /** 快照 → 状态栏紧凑单行（不含账号标签）；5 格横向进度条 + 重置时间，无百分比 */
 export function formatCompactLine(snapshot: UsageSnapshot): string {
-  if (!snapshot.subscribed) return "未订阅";
+  if (!snapshot.subscribed) return "none";
   return snapshot.windows
     .map((w) => {
     const label =

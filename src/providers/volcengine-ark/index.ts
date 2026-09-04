@@ -96,18 +96,18 @@ function normalizeWindows(result: Record<string, unknown>): UsageWindow[] {
 
 export const volcengineArkProvider: UsageProvider = {
   id: "volcengine-ark",
-  displayName: "火山方舟",
+  displayName: "Volcengine Ark",
 
   parseCredential(config: ProviderAccountConfig): Credential {
     const planType = String(config.planType ?? "coding").toLowerCase();
     if (planType !== "coding" && planType !== "agent") {
-      throw new Error(`planType 必须为 coding 或 agent，当前: ${config.planType}`);
+      throw new Error(`planType must be coding or agent, got: ${config.planType}`);
     }
     if (!config.accessKeyId || !config.secretAccessKey) {
-      throw new Error(`账号[${config.label ?? planType}] 缺少 accessKeyId / secretAccessKey`);
+      throw new Error(`Account[${config.label ?? planType}] missing accessKeyId / secretAccessKey`);
     }
     return {
-      accountLabel: config.label ?? (planType === "agent" ? "火山Agent" : "火山Coding"),
+      accountLabel: config.label ?? (planType === "agent" ? "Volcengine Agent" : "Volcengine Coding"),
       planType,
       accessKeyId: config.accessKeyId,
       secretAccessKey: config.secretAccessKey,

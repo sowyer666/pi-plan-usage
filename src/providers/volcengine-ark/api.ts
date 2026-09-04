@@ -59,7 +59,7 @@ export async function callArkOpenAPI(
   try {
     res = await fetch(url, { method: "POST", headers, body, signal });
   } catch (e) {
-    throw new Error(`网络请求失败: ${e instanceof Error ? e.message : String(e)}`);
+    throw new Error(`Network request failed: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   const text = await res.text();
@@ -67,13 +67,13 @@ export async function callArkOpenAPI(
   try {
     data = JSON.parse(text) as Record<string, unknown>;
   } catch {
-    throw new Error(`HTTP ${res.status} 响应非 JSON: ${text.slice(0, 200)}`);
+    throw new Error(`HTTP ${res.status} response is not JSON: ${text.slice(0, 200)}`);
   }
 
   const meta = data?.ResponseMetadata as Record<string, unknown> | undefined;
   const err = meta?.Error as Record<string, unknown> | undefined;
   if (err) {
-    throw new Error(`火山OpenAPI错误 ${err.Code}: ${err.Message}`);
+    throw new Error(`Volcengine OpenAPI error ${err.Code}: ${err.Message}`);
   }
   if (!res.ok) {
     throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);

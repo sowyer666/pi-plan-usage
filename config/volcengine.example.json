@@ -3,14 +3,14 @@
     {
       "label": "火山Coding",
       "planType": "coding",
-      "accessKeyId": "AKTxxxxxxxxxxxxxxxx",
-      "secretAccessKey": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      "accessKeyId": "AKLTxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "secretAccessKey": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=="
     },
     {
       "label": "火山Agent",
       "planType": "agent",
-      "accessKeyId": "AKLTREDACTEDEXAMPLEKEYREPLACEWITHYOURKEY",
-      "secretAccessKey": "REDACTEDEXAMPLESECRETKEYREPLACEWITHYOURSECRET=="
+      "accessKeyId": "AKLTxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "secretAccessKey": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=="
     }
   ],
   "cacheTtlSeconds": 300,

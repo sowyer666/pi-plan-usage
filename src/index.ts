@@ -166,8 +166,56 @@ export default function (pi: ExtensionAPI) {
     return false;
   }
 
+  /** /show-usage 参数自动补全：按当前输入的第几个参数给出候选 */
+  function argumentCompletions(argumentPrefix: string) {
+    const typed = argumentPrefix.toLowerCase();
+    const parts = typed.split(/\s+/).filter(Boolean);
+    const completingNewToken = typed.endsWith(" ");
+    // 正在输入中的 token（光标前的最后一段）；补全新 token 时空串
+    const current = completingNewToken ? "" : (parts[parts.length - 1] ?? "");
+    const argIndex = completingNewToken ? parts.length : parts.length - 1;
+
+    const filter = (items: { value: string; description: string }[]) =>
+      items.filter((i) => i.value.startsWith(current));
+
+    // 第 1 个参数：特殊字 + 各 provider 短名
+    if (argIndex === 0) {
+      const items = [
+        { value: "all", description: "Show all providers and plans" },
+        { value: "off", description: "Hide everything" },
+        { value: "status", description: "Show current on/off state" },
+      ];
+      for (const file of allProviderFiles()) {
+        const plans = file.accounts.map((a) => String(a.planType).toLowerCase()).join("/");
+        items.push({ value: file.shortName, description: `${providerIdFor(file.shortName)} (${plans})` });
+      }
+      return filter(items);
+    }
+
+    // 第 2 个参数：该 provider 的套餐列表 + on/off
+    if (argIndex === 1) {
+      const first = parts[0] ?? "";
+      const file = resolveProviderFile(first);
+      if (!file) return [{ value: "on", description: "Show" }, { value: "off", description: "Hide" }];
+      const items = file.accounts.map((a) => ({
+        value: String(a.planType).toLowerCase(),
+        description: a.label ?? String(a.planType),
+      }));
+      items.push({ value: "on", description: "Show all plans of this provider" });
+      items.push({ value: "off", description: "Hide all plans of this provider" });
+      return filter(items);
+    }
+
+    // 第 3 个参数：显式 on / off
+    return [
+      { value: "on", description: "Show" },
+      { value: "off", description: "Hide" },
+    ];
+  }
+
   pi.registerCommand("show-usage", {
     description: "Status bar plan usage: /show-usage [provider] [plan] [on|off] | all | off | status",
+    getArgumentCompletions: (argumentPrefix) => argumentCompletions(argumentPrefix),
     handler: async (args, ctx) => {
       const tokens = (args ?? "").trim().toLowerCase().split(/\s+/).filter(Boolean);
 

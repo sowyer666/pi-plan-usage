@@ -15,7 +15,7 @@
 | # | 决策 | 内容 |
 |---|------|------|
 | D1 | 接口以官方实现为准 | 套餐额度快照：Coding Plan → `GetCodingPlanUsage`，Agent Plan → `GetAFPUsage`（官方 ark-cli 同款 OpenAPI，AK/SK 签名）；仅取**套餐额度**数据 |
-| D2 | UI 形式 | **不自动刷新、不用独立窗口**。`/show-usage [coding\|agent\|all]` 分别开关各套餐在**底部状态栏**（`ctx.ui.setStatus`，单行紧凑格式）的显示；关闭时清缓存，再开即强制刷新 |
+| D2 | UI 形式 | **状态栏显示（每 2 分钟自动刷新，`refreshIntervalSeconds` 可调）**。`/show-usage [coding\|agent\|all]` 分别开关各套餐在底部状态栏（自定义 footer，单行紧凑格式）的显示；自动刷新绕过缓存强制查询；关闭时清缓存，再开即刷新 |
 | D3 | 配置位置 | **插件目录下 `config/` 文件夹**，JSON 按平台建：先只有 `config/volcengine.json`，后续每供应商一个文件 |
 | D4 | 数据范围 | 只要**套餐额度**（窗口用量 + 重置时间），不做推理用量明细 |
 
@@ -123,8 +123,9 @@ interface UsageProvider {
 C:5h 4%·2h57m 周 27%·61h 月 57% | A:未订阅
 ```
 
+- 自动刷新：session_start 启动定时器（默认 120s，`refreshIntervalSeconds` 可调），仅刷新已开启的套餐，绕过缓存；session_shutdown 清理定时器
+- 状态栏显示（自定义 footer，第 3 行右对齐，dim 灰）：`C:5h ░░░░░·2h57m w █░░░░·2d m ███░░·2d | A:未订阅`
 - 查询失败显示 `C:查询失败`（错误短缓存 30s 避免高频重试）
-- 缓存 5 分钟内不打 API；开关关闭即清缓存
 
 ### 5.3 配置（决策 D3）
 
@@ -204,4 +205,4 @@ pi-volcengine-usage/
 
 版本跟随产品版本（见 AGENTS.md 版本规范），不设独立文档版本。
 
-- **0.1.0**：初版——火山方舟 provider（`GetCodingPlanUsage`/`GetAFPUsage` 查询套餐额度）；`/show-usage [coding|agent|all]` 状态栏显示开关 + `query_usage` 工具；配置在插件目录 `config/` 按平台建 JSON。
+- **0.1.0**：初版——火山方舟 provider（`GetCodingPlanUsage`/`GetAFPUsage` 查询套餐额度）；`/show-usage [coding|agent|all]` 状态栏显示开关（5 格进度条 + 分级时间格式，右对齐，2 分钟自动刷新）+ `query_usage` 工具；配置在插件目录 `config/` 按平台建 JSON。

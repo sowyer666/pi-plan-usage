@@ -17,6 +17,8 @@ export interface VolcengineAccountConfig {
 export interface PluginConfig {
   accounts: VolcengineAccountConfig[];
   cacheTtlSeconds: number;
+  /** 状态栏自动刷新间隔（秒），默认 120 */
+  refreshIntervalSeconds: number;
 }
 
 /** 插件根目录（src 的上一级） */
@@ -39,5 +41,9 @@ export function loadConfig(): PluginConfig {
   return {
     accounts,
     cacheTtlSeconds: typeof raw.cacheTtlSeconds === "number" ? raw.cacheTtlSeconds : 300,
+    refreshIntervalSeconds:
+      typeof raw.refreshIntervalSeconds === "number" && raw.refreshIntervalSeconds > 0
+        ? raw.refreshIntervalSeconds
+        : 120,
   };
 }

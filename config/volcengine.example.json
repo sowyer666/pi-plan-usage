@@ -13,5 +13,6 @@
       "secretAccessKey": "REDACTEDEXAMPLESECRETKEYREPLACEWITHYOURSECRET=="
     }
   ],
-  "cacheTtlSeconds": 300
+  "cacheTtlSeconds": 300,
+  "refreshIntervalSeconds": 120
 }

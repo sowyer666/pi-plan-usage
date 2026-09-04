@@ -39,9 +39,11 @@ export default function (pi: ExtensionAPI) {
   let cache = new TTLCache<UsageSnapshot | Error>();
   // 当前用量右对齐文本（空 = 不显示）
   let usageRightText = "";
+  // 状态栏自动刷新定时器（session_start 启动，session_shutdown 清理）
+  let refreshTimer: ReturnType<typeof setInterval> | undefined;
 
-  /** 查询指定 planType 的账号（取配置中第一个匹配项），带缓存 */
-  async function queryPlan(planType: PlanType): Promise<UsageSnapshot | Error> {
+  /** 查询指定 planType 的账号（取配置中第一个匹配项）；force = 绕过缓存强制查询 */
+  async function queryPlan(planType: PlanType, force = false): Promise<UsageSnapshot | Error> {
     const config = loadConfig();
     const ttlMs = config.cacheTtlSeconds * 1000;
     const acc = config.accounts.find((a) => String(a.planType).toLowerCase() === planType);
@@ -52,7 +54,7 @@ export default function (pi: ExtensionAPI) {
 
     const cred = provider.parseCredential(acc);
     const key = `${provider.id}:${planType}`;
-    let cached = cache.get(key);
+    let cached = force ? undefined : cache.get(key);
     if (!cached) {
       try {
         cached = await provider.queryUsage(cred);
@@ -66,11 +68,11 @@ export default function (pi: ExtensionAPI) {
   }
 
   /** 按当前开关状态更新用量右对齐文本 */
-  async function refreshUsageText(): Promise<void> {
+  async function refreshUsageText(force = false): Promise<void> {
     const parts: string[] = [];
     for (const plan of ["coding", "agent"] as PlanType[]) {
       if (!enabled[plan]) continue;
-      const snap = await queryPlan(plan);
+      const snap = await queryPlan(plan, force);
       const tag = plan === "coding" ? "C" : "A";
       parts.push(snap instanceof Error ? `${tag}:查询失败` : `${tag}:${formatCompactLine(snap)}`);
     }
@@ -117,6 +119,22 @@ export default function (pi: ExtensionAPI) {
   // 注意：这里只注册一次命令；footer 在 session_start 时重设（session 替换后旧 footer 会被清理）。
   pi.on("session_start", (_event, ctx) => {
     if (ctx.mode !== "tui") return;
+
+    // 状态栏自动刷新定时器（默认 2 分钟；后台静默失败，不打断 UI）
+    if (!refreshTimer) {
+      let intervalMs = 120_000;
+      try {
+        intervalMs = loadConfig().refreshIntervalSeconds * 1000;
+      } catch {
+        // 配置不可用时用默认值
+      }
+      refreshTimer = setInterval(() => {
+        if (enabled.coding || enabled.agent) {
+          refreshUsageText(true).catch(() => {});
+        }
+      }, intervalMs);
+      refreshTimer.unref?.(); // 不阻止 pi 退出
+    }
 
     ctx.ui.setFooter((_tui, theme, footerData) => ({
       invalidate() {},
@@ -223,6 +241,14 @@ export default function (pi: ExtensionAPI) {
         return lines;
       },
     }));
+  });
+
+  // 会话结束/替换时清理定时器
+  pi.on("session_shutdown", () => {
+    if (refreshTimer) {
+      clearInterval(refreshTimer);
+      refreshTimer = undefined;
+    }
   });
 
   pi.registerTool({

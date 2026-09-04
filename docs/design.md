@@ -15,7 +15,7 @@
 | # | 决策 | 内容 |
 |---|------|------|
 | D1 | 接口以官方实现为准 | 套餐额度快照：Coding Plan → `GetCodingPlanUsage`，Agent Plan → `GetAFPUsage`（官方 ark-cli 同款 OpenAPI，AK/SK 签名）；仅取**套餐额度**数据 |
-| D2 | UI 形式 | **不自动刷新、不用状态栏**。`/show-usage` 命令：查询一次并弹出**右侧 overlay 面板**（`anchor: right-center`，覆盖在界面右侧的竖栏），Esc / 回车 / q 关闭，再次执行刷新 |
+| D2 | UI 形式 | **不自动刷新、不用独立窗口**。`/show-usage [coding\|agent\|all]` 分别开关各套餐在**底部状态栏**（`ctx.ui.setStatus`，单行紧凑格式）的显示；关闭时清缓存，再开即强制刷新 |
 | D3 | 配置位置 | **插件目录下 `config/` 文件夹**，JSON 按平台建：先只有 `config/volcengine.json`，后续每供应商一个文件 |
 | D4 | 数据范围 | 只要**套餐额度**（窗口用量 + 重置时间），不做推理用量明细 |
 
@@ -24,8 +24,7 @@
 ```
 ┌─────────────────────────────────────────────┐
 │  pi 集成层（src/index.ts）                    │
-│  - /show-usage 开关命令 → 边栏 widget 显隐     │
-│  - query_usage 工具（供 LLM 查询，次要能力）   │
+│  - /show-usage 命令：参数开关各套餐的状态栏显示        │
 ├─────────────────────────────────────────────┤
 │  供应商抽象层（src/providers/types.ts）        │
 │  - UsageProvider 接口 + Provider 注册表       │
@@ -111,29 +110,21 @@ interface UsageProvider {
 }
 ```
 
-### 5.2 交互设计（决策 D2，B 方案：右侧 overlay 面板）
+### 5.2 交互设计（决策 D2：状态栏 + 参数开关）
 
 | 能力 | 名称 | 说明 |
 |------|------|------|
-| 命令（核心） | `/show-usage` | 查询一次并弹出右侧 overlay 面板（`ctx.ui.custom` + `overlayOptions: { anchor: "right-center", width: "45%" }`），Esc / 回车 / q 关闭；再次执行 = 刷新（缓存内不打 API） |
+| 命令（核心） | `/show-usage [coding\|agent\|all]` | 分别开关各套餐在底部状态栏的显示；无参/`all` = 全部切换；**关闭时清该套餐缓存，再开 = 强制刷新** |
 | 工具（次要） | `query_usage` | 供 LLM 调用，参数：`account?`（账号名，缺省查全部），返回文本快照 |
 
-右侧面板（带边框，Theme 着色）：
+状态栏显示（`ctx.ui.setStatus`，单行紧凑格式，`C:` = Coding、`A:` = Agent）：
 
 ```
-╭──────────────────────────────╮
-│ 📊 火山Coding（coding）        │
-│  session  ▓░░░░░░░░░ 4% · 2h57m重置 │
-│  weekly   ▓▓▓░░░░░░░ 27% · 61h03m重置 │
-│  monthly  ▓▓▓▓▓▓░░░░ 57% · 61h03m重置 │
-│ 📊 火山Agent（agent）          │
-│  未订阅套餐或无用量数据          │
-│ Esc 关闭                       │
-╰──────────────────────────────╯
+C:5h 4%·2h57m 周 27%·61h 月 57% | A:未订阅
 ```
 
-- 查询中无面板，失败用 `notify` 提示错误原因；
-- 缓存 5 分钟内重复打开不打 API
+- 查询失败显示 `C:查询失败`（错误短缓存 30s 避免高频重试）
+- 缓存 5 分钟内不打 API；开关关闭即清缓存
 
 ### 5.3 配置（决策 D3）
 
@@ -213,4 +204,4 @@ pi-volcengine-usage/
 
 版本跟随产品版本（见 AGENTS.md 版本规范），不设独立文档版本。
 
-- **0.1.0**：初版——火山方舟 provider（`GetCodingPlanUsage`/`GetAFPUsage` 查询套餐额度）；`/show-usage` 右侧 overlay 面板（Esc 关闭）+ `query_usage` 工具；配置在插件目录 `config/` 按平台建 JSON。
+- **0.1.0**：初版——火山方舟 provider（`GetCodingPlanUsage`/`GetAFPUsage` 查询套餐额度）；`/show-usage [coding|agent|all]` 状态栏显示开关 + `query_usage` 工具；配置在插件目录 `config/` 按平台建 JSON。

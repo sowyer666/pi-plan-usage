@@ -67,6 +67,21 @@ export function formatWidgetLines(snapshot: UsageSnapshot): string[] {
   return lines;
 }
 
+/** 快照 → 状态栏紧凑单行（不含账号标签） */
+export function formatCompactLine(snapshot: UsageSnapshot): string {
+  if (!snapshot.subscribed) return "未订阅";
+  return snapshot.windows
+    .map((w) => {
+    const label =
+      w.kind === "rolling5h" ? "5h" : w.kind === "weekly" ? "周" : w.kind === "monthly" ? "月" : w.label;
+    const pct =
+      w.percent ?? (w.used !== undefined && w.total ? Math.round((w.used / w.total) * 100) : undefined);
+    const reset = w.resetAt ? relativeTime(w.resetAt) : "";
+    return `${label}${pct !== undefined ? ` ${pct}%` : ""}${reset ? `·${reset}` : ""}`;
+  })
+    .join(" ");
+}
+
 /** 快照 → 单段文本 */
 export function formatSnapshotText(snapshot: UsageSnapshot): string {
   return formatWidgetLines(snapshot).join("\n");

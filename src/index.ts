@@ -8,7 +8,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Container, DynamicBorder, Text } from "@earendil-works/pi-tui";
+import { Container, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 import { loadConfig } from "./config.ts";
@@ -26,23 +26,42 @@ class UsagePanel extends Container {
     super();
     this.onClose = onClose;
 
-    this.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+    const border = (s: string) => theme.fg("accent", s);
+    // 面板内容宽度（取最长行的可见宽度，限定范围）
+    const inner = Math.min(
+      48,
+      Math.max(30, ...lines.map((l) => visibleWidth(l) + 2)),
+    );
+
+    const borderLine = border(`╭${"─".repeat(inner)}╮`);
+    const borderEnd = border(`╰${"─".repeat(inner)}╯`);
+    const pad = (l: string) =>
+      border("│ ") +
+      l +
+      border(" ") +
+      " ".repeat(Math.max(0, inner - visibleWidth(l) - 2)) +
+      border(" │");
+
+    this.addChild(new Text(borderLine, 0, 0));
     for (const line of lines) {
       const trimmed = line.trimStart();
+      let out: string;
       if (!trimmed) {
-        this.addChild(new Text("", 0, 0));
+        out = "";
       } else if (trimmed.startsWith("📊")) {
-        this.addChild(new Text(theme.fg("accent", theme.bold(line)), 0, 0));
+        out = theme.fg("accent", theme.bold(line));
       } else if (trimmed.startsWith("❌")) {
-        this.addChild(new Text(theme.fg("error", line), 0, 0));
+        out = theme.fg("error", line);
       } else if (trimmed.startsWith("未订阅") || trimmed.startsWith("未找到")) {
-        this.addChild(new Text(theme.fg("muted", line), 0, 0));
+        out = theme.fg("muted", line);
       } else {
-        this.addChild(new Text(line, 0, 0));
+        out = line;
       }
+      this.addChild(new Text(truncateToWidth(pad(out), inner + 4, ""), 0, 0));
     }
-    this.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
-    this.addChild(new Text(theme.fg("dim", "Esc 关闭 / 再次执行 /show-usage 刷新"), 0, 0));
+    this.addChild(new Text(truncateToWidth(pad(border("─".repeat(inner - 2))), inner + 4, ""), 0, 0));
+    this.addChild(new Text(truncateToWidth(pad(theme.fg("dim", "Esc 关闭 / /show-usage 刷新")), inner + 4, ""), 0, 0));
+    this.addChild(new Text(borderEnd, 0, 0));
   }
 
   handleInput(data: string): void {

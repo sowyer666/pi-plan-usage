@@ -1,5 +1,5 @@
 /**
- * pi-volcengine-usage — pi 扩展入口
+ * pi-plan-usage — pi 扩展入口
  *
  * - /show-usage [coding|agent|all]：分别开关 Coding Plan / Agent Plan 在底部状态栏的显示。
  *   通过 setFooter 自定义 footer：复刻默认信息（pwd / token 统计 / 模型名 / 其他扩展状态），

@@ -1,4 +1,4 @@
-# AGENTS.md — pi-volcengine-usage
+# AGENTS.md — pi-plan-usage
 
 ## 项目简介
 

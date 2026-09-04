@@ -1,4 +1,4 @@
-# pi-volcengine-usage 设计文档
+# pi-plan-usage 设计文档
 
 > 状态：**已确认，待开发** · 产品版本：0.1.0（开发版）
 
@@ -104,7 +104,7 @@ interface UsageProvider {
 
 ```json
 {
-  "name": "pi-volcengine-usage",
+  "name": "pi-plan-usage",
   "keywords": ["pi-package"],
   "pi": { "extensions": ["./src/index.ts"] }
 }
@@ -171,7 +171,7 @@ config/
 ## 6. 目录结构
 
 ```
-pi-volcengine-usage/
+pi-plan-usage/
 ├── AGENTS.md
 ├── docs/                            # 文档（本目录）
 ├── package.json

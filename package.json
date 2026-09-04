@@ -1,5 +1,5 @@
 {
-  "name": "pi-volcengine-usage",
+  "name": "pi-plan-usage",
   "version": "0.1.0",
   "description": "pi coding agent 插件：查询火山引擎 Coding Plan / Agent Plan 套餐用量",
   "type": "module",

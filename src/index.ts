@@ -1,13 +1,14 @@
 /**
  * pi-volcengine-usage — pi 扩展入口
  *
- * - /show-usage 开关命令：显示 → 查询一次并在边栏（widget）展示；再执行 → 隐藏
- *   不自动轮询、不占状态栏（设计决策 D2）
+ * - /show-usage 命令：查询用量并弹出**右侧 overlay 面板**（anchor: right-center），
+ *   Esc / 回车 / q 关闭。不自动轮询、不占状态栏（设计决策 D2，B 方案）
  * - query_usage 工具：供 LLM 查询用量，返回文本快照
  * - 结果缓存（默认 5 分钟）避免重复打 API
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Container, DynamicBorder, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 import { loadConfig } from "./config.ts";
@@ -17,20 +18,44 @@ import { formatWidgetLines } from "./format.ts";
 // 火山方舟 provider（import 触发注册）
 import "./providers/volcengine-ark/index.ts";
 
-const WIDGET_ID = "volcengine-usage";
+/** 右侧用量面板：带边框、按行着色，Esc/回车/q 关闭 */
+class UsagePanel extends Container {
+  private onClose: () => void;
 
-export default function (pi: ExtensionAPI) {
-  let widgetVisible = false;
-  // 缓存放在闭包里，随扩展实例生命周期存在
-  let cache = new TTLCache<UsageSnapshot | Error>();
+  constructor(lines: string[], theme: any, onClose: () => void) {
+    super();
+    this.onClose = onClose;
 
-  function cacheTtlMs(): number {
-    try {
-      return loadConfig().cacheTtlSeconds * 1000;
-    } catch {
-      return 300_000;
+    this.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+    for (const line of lines) {
+      const trimmed = line.trimStart();
+      if (!trimmed) {
+        this.addChild(new Text("", 0, 0));
+      } else if (trimmed.startsWith("📊")) {
+        this.addChild(new Text(theme.fg("accent", theme.bold(line)), 0, 0));
+      } else if (trimmed.startsWith("❌")) {
+        this.addChild(new Text(theme.fg("error", line), 0, 0));
+      } else if (trimmed.startsWith("未订阅") || trimmed.startsWith("未找到")) {
+        this.addChild(new Text(theme.fg("muted", line), 0, 0));
+      } else {
+        this.addChild(new Text(line, 0, 0));
+      }
+    }
+    this.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+    this.addChild(new Text(theme.fg("dim", "Esc 关闭 / 再次执行 /show-usage 刷新"), 0, 0));
+  }
+
+  handleInput(data: string): void {
+    if (data === "\x1b" || data === "\r" || data === "\n" || data === "q") {
+      this.onClose();
     }
   }
+}
+
+export default function (pi: ExtensionAPI) {
+  let panelOpen = false;
+  // 缓存放在闭包里，随扩展实例生命周期存在
+  let cache = new TTLCache<UsageSnapshot | Error>();
 
   /** 查询全部（或过滤）账号，返回多行展示文本；单账号失败不影响其他账号 */
   async function queryAccounts(filter?: string): Promise<string[]> {
@@ -74,33 +99,37 @@ export default function (pi: ExtensionAPI) {
   }
 
   pi.registerCommand("show-usage", {
-    description: "显示/隐藏火山引擎套餐用量（边栏开关）",
+    description: "显示火山引擎套餐用量（右侧面板，Esc 关闭）",
     handler: async (_args, ctx) => {
-      if (!ctx.hasUI) {
-        ctx.ui.notify("当前模式无 UI，无法显示边栏", "error");
+      if (ctx.mode !== "tui") {
+        ctx.ui.notify("当前模式无 TUI，无法显示面板", "error");
+        return;
+      }
+      if (panelOpen) {
+        ctx.ui.notify("用量面板已打开", "info");
         return;
       }
 
-      // 开关：已显示 → 隐藏
-      if (widgetVisible) {
-        widgetVisible = false;
-        ctx.ui.setWidget(WIDGET_ID, undefined);
-        return;
-      }
-
-      widgetVisible = true;
-      ctx.ui.setWidget(WIDGET_ID, ["📊 正在查询用量…"]);
-
+      panelOpen = true;
       try {
         const lines = await queryAccounts();
-        if (widgetVisible) ctx.ui.setWidget(WIDGET_ID, lines);
+        await ctx.ui.custom(
+          (_tui, theme, _keybindings, done) => new UsagePanel(lines, theme, () => done(null)),
+          {
+            overlay: true,
+            overlayOptions: {
+              width: "45%",
+              minWidth: 36,
+              maxHeight: "80%",
+              anchor: "right-center",
+              offsetX: -1,
+            },
+          },
+        );
       } catch (e) {
-        if (widgetVisible) {
-          ctx.ui.setWidget(WIDGET_ID, [
-            `❌ 查询失败: ${e instanceof Error ? e.message : String(e)}`,
-            "修复配置后再次执行 /show-usage 重查",
-          ]);
-        }
+        ctx.ui.notify(`查询失败: ${e instanceof Error ? e.message : String(e)}`, "error");
+      } finally {
+        panelOpen = false;
       }
     },
   });

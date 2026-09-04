@@ -15,7 +15,7 @@
 | # | 决策 | 内容 |
 |---|------|------|
 | D1 | 接口以官方实现为准 | 套餐额度快照：Coding Plan → `GetCodingPlanUsage`，Agent Plan → `GetAFPUsage`（官方 ark-cli 同款 OpenAPI，AK/SK 签名）；仅取**套餐额度**数据 |
-| D2 | UI 形式 | **不自动刷新、不用状态栏**。`/show-usage` 开关命令：执行显示边栏（widget），再执行隐藏。打开时查询一次（带缓存） |
+| D2 | UI 形式 | **不自动刷新、不用状态栏**。`/show-usage` 命令：查询一次并弹出**右侧 overlay 面板**（`anchor: right-center`，覆盖在界面右侧的竖栏），Esc / 回车 / q 关闭，再次执行刷新 |
 | D3 | 配置位置 | **插件目录下 `config/` 文件夹**，JSON 按平台建：先只有 `config/volcengine.json`，后续每供应商一个文件 |
 | D4 | 数据范围 | 只要**套餐额度**（窗口用量 + 重置时间），不做推理用量明细 |
 
@@ -111,23 +111,28 @@ interface UsageProvider {
 }
 ```
 
-### 5.2 交互设计（决策 D2）
+### 5.2 交互设计（决策 D2，B 方案：右侧 overlay 面板）
 
 | 能力 | 名称 | 说明 |
 |------|------|------|
-| 命令（核心） | `/show-usage` | **开关**：无 widget 时 → 查询一次并在边栏显示；已有 widget → 移除隐藏。不自动轮询 |
+| 命令（核心） | `/show-usage` | 查询一次并弹出右侧 overlay 面板（`ctx.ui.custom` + `overlayOptions: { anchor: "right-center", width: "45%" }`），Esc / 回车 / q 关闭；再次执行 = 刷新（缓存内不打 API） |
 | 工具（次要） | `query_usage` | 供 LLM 调用，参数：`account?`（账号名，缺省查全部），返回文本快照 |
 
-边栏 widget 内容（示例）：
+右侧面板（带边框，Theme 着色）：
 
 ```
-📊 火山Coding (coding)
-  5h窗口  ▓▓▓▓░░░░░░ 320/1200  4h12m后重置
-  本周    ▓▓░░░░░░░░ 2100/9000
-  本月    ▓░░░░░░░░░ 5300/18000
+╭──────────────────────────────╮
+│ 📊 火山Coding（coding）        │
+│  session  ▓░░░░░░░░░ 4% · 2h57m重置 │
+│  weekly   ▓▓▓░░░░░░░ 27% · 61h03m重置 │
+│  monthly  ▓▓▓▓▓▓░░░░ 57% · 61h03m重置 │
+│ 📊 火山Agent（agent）          │
+│  未订阅套餐或无用量数据          │
+│ Esc 关闭                       │
+╰──────────────────────────────╯
 ```
 
-- 查询中显示"查询中…"，失败显示错误原因与重试提示（可再次 `/show-usage` 重查）
+- 查询中无面板，失败用 `notify` 提示错误原因；
 - 缓存 5 分钟内重复打开不打 API
 
 ### 5.3 配置（决策 D3）
@@ -208,4 +213,4 @@ pi-volcengine-usage/
 
 版本跟随产品版本（见 AGENTS.md 版本规范），不设独立文档版本。
 
-- **0.1.0**：初版设计——火山方舟 `GetInferenceUsage` 查询套餐额度；`/show-usage` 开关 + 边栏 widget（不轮询）；配置在插件目录 `config/` 按平台建 JSON。
+- **0.1.0**：初版——火山方舟 provider（`GetCodingPlanUsage`/`GetAFPUsage` 查询套餐额度）；`/show-usage` 右侧 overlay 面板（Esc 关闭）+ `query_usage` 工具；配置在插件目录 `config/` 按平台建 JSON。

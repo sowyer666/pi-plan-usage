@@ -10,6 +10,10 @@
   "engines": {
     "node": ">=22.13"
   },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
   "scripts": {
     "cli": "node src/cli.ts"
   },

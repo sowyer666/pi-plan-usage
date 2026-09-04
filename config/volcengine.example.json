@@ -9,8 +9,8 @@
     {
       "label": "火山Agent",
       "planType": "agent",
-      "accessKeyId": "$VOLC_AK",
-      "secretAccessKey": "$VOLC_SK"
+      "accessKeyId": "AKLTREDACTEDEXAMPLEKEYREPLACEWITHYOURKEY",
+      "secretAccessKey": "REDACTEDEXAMPLESECRETKEYREPLACEWITHYOURSECRET=="
     }
   ],
   "cacheTtlSeconds": 300

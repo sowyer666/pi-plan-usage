@@ -52,11 +52,29 @@ function extractResult(data: unknown): Record<string, unknown> {
   return result && typeof result === "object" ? result : {};
 }
 
-/** 提取窗口列表：兼容 QuotaUsage / Periods 等命名，兼容直接给数组 */
+/** 提取窗口列表：兼容数组型（Coding 的 QuotaUsage）与平铺字段型（Agent 的 AFPxxx） */
 function extractWindowList(result: Record<string, unknown>): unknown[] {
   if (Array.isArray(result)) return result;
   const list = pick(result, "QuotaUsage", "Periods", "periods", "QuotaUsages");
-  return Array.isArray(list) ? list : [];
+  if (Array.isArray(list)) return list;
+
+  // Agent Plan（GetAFPUsage）：平铺命名字段，如 AFPFiveHour / AFPWeekly / AFPMonthly / AFPDaily
+  const named = [
+    ["AFPFiveHour", "5h"],
+    ["AFPDaily", "daily"],
+    ["AFPWeekly", "weekly"],
+    ["AFPMonthly", "monthly"],
+  ] as const;
+  const windows: unknown[] = [];
+  for (const [key, label] of named) {
+    const item = result[key];
+    if (item && typeof item === "object") {
+      windows.push({ Label: label, ...(item as Record<string, unknown>) });
+    }
+  }
+  if (windows.length > 0) return windows;
+
+  return [];
 }
 
 function normalizeWindows(result: Record<string, unknown>): UsageWindow[] {
@@ -65,16 +83,13 @@ function normalizeWindows(result: Record<string, unknown>): UsageWindow[] {
     if (!item || typeof item !== "object") continue;
     const p = item as Record<string, unknown>;
     const label = String(pick(p, "Label", "label", "Level", "level", "Window", "Type") ?? "unknown");
-    windows.push({
-      kind: classifyWindow(label),
-      label,
-      used: pick(p, "Used", "used", "RequestUsed") as number | undefined,
-      total: pick(p, "Total", "total", "Limit", "Quota") as number | undefined,
-      percent: pick(p, "Percent", "percent", "UsagePercent") as number | undefined,
-      resetAt: toISO(
-        pick(p, "ResetAt", "reset_at", "ResetTime", "ResetTimestamp", "NextResetTime", "ExpireTime"),
-      ),
-    });
+    const used = pick(p, "Used", "used", "RequestUsed") as number | undefined;
+    const total = pick(p, "Quota", "Total", "total", "Limit") as number | undefined;
+    const percent = pick(p, "Percent", "percent", "UsagePercent") as number | undefined;
+    const resetAt = toISO(
+      pick(p, "ResetAt", "reset_at", "ResetTime", "ResetTimestamp", "NextResetTime", "ExpireTime"),
+    );
+    windows.push({ kind: classifyWindow(label), label, used, total, percent, resetAt });
   }
   return windows;
 }
@@ -106,13 +121,18 @@ export const volcengineArkProvider: UsageProvider = {
     const result = extractResult(data);
     const windows = normalizeWindows(result);
     const tier = pick(result, "Tier", "tier", "PlanTier", "Edition");
+    // Agent Plan 未订阅时也会返回 4 个全 0 的 AFPxxx 字段，需看 PlanType 是否为空；
+    // Coding Plan 无 PlanType 字段，按窗口列表是否非空判定
+    const planTypeRaw = pick(result, "PlanType", "planType");
+    const subscribed =
+      planTypeRaw !== undefined ? String(planTypeRaw) !== "" : windows.length > 0;
 
     return {
       providerId: volcengineArkProvider.id,
       accountLabel: cred.accountLabel,
       planType: cred.planType,
       tier: tier !== undefined ? String(tier) : undefined,
-      subscribed: windows.length > 0,
+      subscribed,
       windows,
       fetchedAt: new Date().toISOString(),
       raw: data,

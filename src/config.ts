@@ -1,6 +1,5 @@
 /**
  * 配置加载：插件目录下 config/<平台>.json（先只有 volcengine.json）
- * 值支持 "$ENV_VAR" 形式引用环境变量，避免明文落盘。
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -23,17 +22,6 @@ export interface PluginConfig {
 /** 插件根目录（src 的上一级） */
 export function pluginRoot(): string {
   return join(dirname(fileURLToPath(import.meta.url)), "..");
-}
-
-/** 展开 "$VAR" 形式的环境变量引用 */
-export function expandEnv(value: string): string {
-  if (value.startsWith("$")) {
-    const name = value.slice(1);
-    const v = process.env[name];
-    if (!v) throw new Error(`环境变量 ${name} 未设置（配置中引用为 ${value}）`);
-    return v;
-  }
-  return value;
 }
 
 export function loadConfig(): PluginConfig {

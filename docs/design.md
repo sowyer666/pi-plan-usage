@@ -147,22 +147,22 @@ config/
     {
       "label": "火山Coding",
       "planType": "coding",
-      "accessKeyId": "AK",
-      "secretAccessKey": "SK"
+      "accessKeyId": "AK...",
+      "secretAccessKey": "SK..."
     },
     {
       "label": "火山Agent",
       "planType": "agent",
-      "accessKeyId": "AK",
-      "secretAccessKey": "SK"
+      "accessKeyId": "AK...",
+      "secretAccessKey": "SK..."
     }
   ],
   "cacheTtlSeconds": 300
 }
 ```
 
+- 同一账号同时开通两种套餐时，两个条目填同一套 AK/SK，`planType` 不同即可
 - 仓库提供 `config/volcengine.example.json` 模板，真实配置文件加入 `.gitignore`
-- `secretAccessKey` 支持环境变量占位写法（如 `"$VOLC_SECRET_KEY"`），避免明文落盘
 - 后续新增供应商 = `config/<平台>.json` + 对应 provider 实现
 
 ### 5.4 缓存与错误处理

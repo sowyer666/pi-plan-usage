@@ -488,9 +488,18 @@ export default function (pi: ExtensionAPI) {
 
       applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
         const line = lines[cursorLine] ?? "";
+        // 命令名补全（prefix 以 / 开头且 item.value 不带斜杠）：复刻原生行为，补回斜杠 + 尾空格
+        if (prefix.startsWith("/") && !item.value.startsWith("/")) {
+          const before = line.slice(0, cursorCol - prefix.length);
+          const after = line.slice(cursorCol);
+          const newLine = before + "/" + item.value + " " + after;
+          const newLines = [...lines];
+          newLines[cursorLine] = newLine;
+          return { lines: newLines, cursorLine, cursorCol: before.length + item.value.length + 2 };
+        }
+        // 参数补全：只替换当前 token，保留其他参数，尾随空格方便继续输入
         const before = line.slice(0, cursorCol - prefix.length);
         const after = line.slice(cursorCol);
-        // 替换当前 token，尾随空格方便继续输入下一参数
         const newLine = before + item.value + " " + after;
         const newLines = [...lines];
         newLines[cursorLine] = newLine;

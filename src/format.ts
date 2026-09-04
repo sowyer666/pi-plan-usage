@@ -67,17 +67,22 @@ export function formatWidgetLines(snapshot: UsageSnapshot): string[] {
   return lines;
 }
 
-/** 快照 → 状态栏紧凑单行（不含账号标签） */
+/** 快照 → 状态栏紧凑单行（不含账号标签）；标签 d/w/m，百分比保留 1 位小数 */
 export function formatCompactLine(snapshot: UsageSnapshot): string {
   if (!snapshot.subscribed) return "未订阅";
   return snapshot.windows
     .map((w) => {
     const label =
-      w.kind === "rolling5h" ? "5h" : w.kind === "weekly" ? "周" : w.kind === "monthly" ? "月" : w.label;
+      w.kind === "rolling5h" ? "5h" : w.kind === "daily" ? "d" : w.kind === "weekly" ? "w" : w.kind === "monthly" ? "m" : w.label;
+    // 优先用 used/total 精确计算，保留 1 位小数
     const pct =
-      w.percent ?? (w.used !== undefined && w.total ? Math.round((w.used / w.total) * 100) : undefined);
+      w.used !== undefined && w.total
+        ? (w.used / w.total) * 100
+        : w.percent !== undefined
+          ? w.percent
+          : undefined;
     const reset = w.resetAt ? relativeTime(w.resetAt) : "";
-    return `${label}${pct !== undefined ? ` ${pct}%` : ""}${reset ? `·${reset}` : ""}`;
+    return `${label}${pct !== undefined ? ` ${pct.toFixed(1)}%` : ""}${reset ? `·${reset}` : ""}`;
   })
     .join(" ");
 }

@@ -1,14 +1,16 @@
 /**
  * pi-volcengine-usage — pi 扩展入口
  *
- * - /show-usage [coding|agent|all]：分别开关 Coding Plan / Agent Plan 在**底部状态栏**的显示
- *   （ctx.ui.setStatus，单行紧凑格式）。关闭 = 隐藏并清缓存，再开 = 强制刷新。
- *   不自动轮询（设计决策 D2）。
+ * - /show-usage [coding|agent|all]：分别开关 Coding Plan / Agent Plan 在底部状态栏的显示。
+ *   通过 setFooter 自定义 footer：复刻默认信息（pwd / token 统计 / 模型名 / 其他扩展状态），
+ *   用量文本整体**右对齐**在扩展状态行右侧。
+ *   关闭 = 清缓存，再开 = 强制刷新；不自动轮询（设计决策 D2）。
  * - query_usage 工具：供 LLM 查询用量，返回文本快照
  * - 结果缓存（默认 5 分钟）避免重复打 API
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 import { loadConfig } from "./config.ts";
@@ -21,11 +23,22 @@ import "./providers/volcengine-ark/index.ts";
 const STATUS_KEY = "volcengine-usage";
 type PlanType = "coding" | "agent";
 
+/** k/M 紧凑数字（与 pi 默认 footer 一致） */
+function formatTokens(count: number): string {
+  if (count < 1000) return count.toString();
+  if (count < 10_000) return `${(count / 1000).toFixed(1)}k`;
+  if (count < 1_000_000) return `${Math.round(count / 1000)}k`;
+  if (count < 10_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
+  return `${Math.round(count / 1_000_000)}M`;
+}
+
 export default function (pi: ExtensionAPI) {
   // 各 plan 在状态栏的开关状态（会话内有效）
   const enabled: Record<PlanType, boolean> = { coding: false, agent: false };
   // 缓存放在闭包里，随扩展实例生命周期存在
   let cache = new TTLCache<UsageSnapshot | Error>();
+  // 当前用量右对齐文本（空 = 不显示）
+  let usageRightText = "";
 
   /** 查询指定 planType 的账号（取配置中第一个匹配项），带缓存 */
   async function queryPlan(planType: PlanType): Promise<UsageSnapshot | Error> {
@@ -52,8 +65,8 @@ export default function (pi: ExtensionAPI) {
     return cached;
   }
 
-  /** 按当前开关状态刷新状态栏文本 */
-  async function refreshStatus(ctx: any): Promise<void> {
+  /** 按当前开关状态更新用量右对齐文本 */
+  async function refreshUsageText(): Promise<void> {
     const parts: string[] = [];
     for (const plan of ["coding", "agent"] as PlanType[]) {
       if (!enabled[plan]) continue;
@@ -61,7 +74,7 @@ export default function (pi: ExtensionAPI) {
       const tag = plan === "coding" ? "C" : "A";
       parts.push(snap instanceof Error ? `${tag}:查询失败` : `${tag}:${formatCompactLine(snap)}`);
     }
-    ctx.ui.setStatus(STATUS_KEY, parts.length > 0 ? parts.join(" | ") : undefined);
+    usageRightText = parts.join(" | ");
   }
 
   pi.registerCommand("show-usage", {
@@ -86,19 +99,128 @@ export default function (pi: ExtensionAPI) {
       if (!enabled.agent) off.push("agent");
       for (const plan of off) cache.delete(`volcengine-ark:${plan}`);
 
-      if (!enabled.coding && !enabled.agent) {
-        ctx.ui.setStatus(STATUS_KEY, undefined);
-        return;
-      }
-      await refreshStatus(ctx);
+      await refreshUsageText();
     },
+  });
+
+  // 自定义 footer：复刻默认 3 行 + 用量文本右对齐在扩展状态行
+  pi.on("session_start", (_event, ctx) => {
+    if (ctx.mode !== "tui") return;
+
+    pi.registerCommand("show-usage", { description: "", handler: async () => {} }); // 占位避免重复注册报错（幂等）
+
+    ctx.ui.setFooter((_tui, theme, footerData) => ({
+      invalidate() {},
+      render(width: number): string[] {
+        // ---- 行1：pwd + git 分支 + 会话名 ----
+        let pwd = ctx.cwd;
+        const home = process.env.HOME || process.env.USERPROFILE;
+        if (home && pwd.startsWith(home)) pwd = "~" + pwd.slice(home.length);
+        const branch = footerData.getGitBranch();
+        if (branch) pwd += ` (${branch})`;
+        const sessionName = ctx.sessionManager.getSessionName();
+        if (sessionName) pwd += ` • ${sessionName}`;
+        const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
+
+        // ---- 行2：左 token 统计 + 右模型名（复刻默认逻辑）----
+        let input = 0, output = 0, cacheRead = 0, cacheWrite = 0, cost = 0;
+        let latestCacheHitRate: number | undefined;
+        for (const entry of ctx.sessionManager.getEntries()) {
+          const u = entry.type === "message" ? (entry.message as any)?.usage : (entry as any)?.usage;
+          if (!u) continue;
+          input += u.input ?? 0;
+          output += u.output ?? 0;
+          cacheRead += u.cacheRead ?? 0;
+          cacheWrite += u.cacheWrite ?? 0;
+          cost += u.cost?.total ?? 0;
+          if (entry.type === "message" && (entry.message as any)?.role === "assistant") {
+            const promptTokens = (u.input ?? 0) + (u.cacheRead ?? 0) + (u.cacheWrite ?? 0);
+            latestCacheHitRate = promptTokens > 0 ? ((u.cacheRead ?? 0) / promptTokens) * 100 : undefined;
+          }
+        }
+
+        const statsParts: string[] = [];
+        if (input) statsParts.push(`↑${formatTokens(input)}`);
+        if (output) statsParts.push(`↓${formatTokens(output)}`);
+        if (cacheRead) statsParts.push(`R${formatTokens(cacheRead)}`);
+        if (cacheWrite) statsParts.push(`W${formatTokens(cacheWrite)}`);
+        if (cacheRead + cacheWrite > 0 && latestCacheHitRate !== undefined) {
+          statsParts.push(`CH${latestCacheHitRate.toFixed(1)}%`);
+        }
+        if (cost) statsParts.push(`$${cost.toFixed(3)}`);
+
+        const contextUsage = ctx.getContextUsage();
+        const ctxWindow = contextUsage?.contextWindow ?? ctx.model?.contextWindow ?? 0;
+        if (contextUsage?.percent != null) {
+          const pct = contextUsage.percent;
+          const display = `${pct.toFixed(1)}%/${formatTokens(ctxWindow)}`;
+          statsParts.push(pct > 90 ? theme.fg("error", display) : pct > 70 ? theme.fg("warning", display) : display);
+        } else {
+          statsParts.push(`?/${formatTokens(ctxWindow)}`);
+        }
+
+        let statsLeft = statsParts.join(" ");
+        const modelName = ctx.model?.id ?? "no-model";
+        let rightSide = ctx.model?.reasoning
+          ? ctx.thinkingLevel === "off"
+            ? `${modelName} • thinking off`
+            : `${modelName} • ${ctx.thinkingLevel}`
+          : modelName;
+
+        let statsLine: string;
+        if (visibleWidth(statsLeft) + 2 + visibleWidth(rightSide) <= width) {
+          const padding = " ".repeat(width - visibleWidth(statsLeft) - visibleWidth(rightSide));
+          statsLine = theme.fg("dim", statsLeft) + theme.fg("dim", padding + rightSide);
+        } else {
+          statsLeft = truncateToWidth(statsLeft, width, "...");
+          statsLine = theme.fg("dim", statsLeft);
+        }
+
+        // ---- 行3：左 = 其他扩展状态，右 = 用量（右对齐）----
+        const otherStatuses = Array.from(footerData.getExtensionStatuses().entries())
+          .filter(([k]) => k !== STATUS_KEY)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([, text]) => text.replace(/[\r\n\t]+/g, " ").replace(/ +/g, " ").trim())
+          .filter(Boolean)
+          .join(" ");
+        const right = usageRightText ? theme.fg("dim", usageRightText) : "";
+
+        let statusLine: string;
+        if (right) {
+          const leftW = visibleWidth(otherStatuses);
+          const rightW = visibleWidth(usageRightText);
+          if (leftW + 2 + rightW <= width) {
+            statusLine =
+              (otherStatuses ? theme.fg("dim", otherStatuses) : "") +
+              " ".repeat(width - leftW - rightW) +
+              right;
+          } else {
+            // 太窄：优先保用量，左侧截断
+            const availLeft = Math.max(0, width - rightW - 2);
+            const leftTrunc = otherStatuses ? truncateToWidth(otherStatuses, availLeft, "...") : "";
+            statusLine =
+              (leftTrunc ? theme.fg("dim", leftTrunc) : "") +
+              " ".repeat(Math.max(1, width - visibleWidth(leftTrunc) - rightW)) +
+              right;
+          }
+        } else if (otherStatuses) {
+          statusLine = theme.fg("dim", truncateToWidth(otherStatuses, width, theme.fg("dim", "...")));
+        } else {
+          statusLine = "";
+        }
+
+        const lines = [pwdLine, statsLine];
+        if (statusLine) lines.push(statusLine);
+        return lines;
+      },
+    }));
   });
 
   pi.registerTool({
     name: "query_usage",
     label: "查询套餐用量",
     description:
-      "查询火山引擎 Coding Plan / Agent Plan 套餐用量（5小时窗口/周/月额度、已用、重置时间）。" +
+      "查询火山引擎 Coding Plan / Agent Plan 套餐用量（5小时窗口/日/周/月额度、已用、重置时间）。" +
       "account 可选，为配置中的账号 label（如\"火山Coding\"），缺省查询全部账号。",
     parameters: Type.Object({
       account: Type.Optional(Type.String({ description: "账号 label 过滤（包含匹配）" })),

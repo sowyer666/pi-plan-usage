@@ -67,31 +67,43 @@ export default function (pi: ExtensionAPI) {
     return cached;
   }
 
-  /** 按当前开关状态更新用量右对齐文本 */
+  /** 按当前开关状态更新用量右对齐文本。
+   * refreshGen 世代号：并发刷新时（快速连续 toggle / 定时器与手动切换重叠），
+   * 只有最新一代的结果允许写入 usageRightText，旧请求返回后直接丢弃，避免旧状态残留。 */
+  let refreshGen = 0;
   async function refreshUsageText(force = false): Promise<void> {
+    const gen = ++refreshGen;
     const parts: string[] = [];
     for (const plan of ["coding", "agent"] as PlanType[]) {
       if (!enabled[plan]) continue;
       const snap = await queryPlan(plan, force);
+      if (gen !== refreshGen) return; // 已有更新的刷新在跑，丢弃本次结果
       const tag = plan === "coding" ? "C" : "A";
       parts.push(snap instanceof Error ? `${tag}:query failed` : `${tag}:${formatCompactLine(snap)}`);
     }
+    if (gen !== refreshGen) return;
     usageRightText = parts.join(" | ");
   }
 
   pi.registerCommand("show-usage", {
-    description: "Toggle plan usage display in the status bar: /show-usage [coding|agent|all]",
+    description: "Switch status bar usage display: /show-usage [coding|agent|all|off]",
     handler: async (args, ctx) => {
       const arg = (args ?? "").trim().toLowerCase();
       if (!arg || arg === "all") {
-        const anyOn = enabled.coding || enabled.agent;
-        enabled.coding = enabled.agent = !anyOn;
+        enabled.coding = enabled.agent = true;
+      } else if (arg === "off" || arg === "none") {
+        enabled.coding = enabled.agent = false;
       } else if (arg === "coding" || arg === "c") {
-        enabled.coding = !enabled.coding;
+        // 互斥切换：开启一个套餐时自动关闭另一个；已开启则关闭
+        const next = !enabled.coding;
+        enabled.coding = next;
+        enabled.agent = false;
       } else if (arg === "agent" || arg === "a") {
-        enabled.agent = !enabled.agent;
+        const next = !enabled.agent;
+        enabled.agent = next;
+        enabled.coding = false;
       } else {
-        ctx.ui.notify("Usage: /show-usage [coding|agent|all]", "info");
+        ctx.ui.notify("Usage: /show-usage [coding|agent|all|off]", "info");
         return;
       }
 
@@ -102,7 +114,8 @@ export default function (pi: ExtensionAPI) {
       for (const plan of off) cache.delete(`volcengine-ark:${plan}`);
 
       try {
-        await refreshUsageText();
+        // 强制刷新：开关切换后的状态栏必须反映最新状态与最新数据
+        await refreshUsageText(true);
         ctx.ui.notify(
           enabled.coding || enabled.agent
             ? `Usage display: ${[enabled.coding ? "coding" : null, enabled.agent ? "agent" : null].filter(Boolean).join(" + ")}`
@@ -128,9 +141,10 @@ export default function (pi: ExtensionAPI) {
       } catch {
         // 配置不可用时用默认值
       }
-      refreshTimer = setInterval(() => {
+      refreshTimer = setInterval(async () => {
         if (enabled.coding || enabled.agent) {
-          refreshUsageText(true).catch(() => {});
+          await refreshUsageText(true).catch(() => {});
+          ctx.ui.notify("", "info"); // 空通知仅用于触发 TUI 重绘，让状态栏拿到新数据
         }
       }, intervalMs);
       refreshTimer.unref?.(); // 不阻止 pi 退出

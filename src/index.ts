@@ -175,8 +175,11 @@ export default function (pi: ExtensionAPI) {
     const current = completingNewToken ? "" : (parts[parts.length - 1] ?? "");
     const argIndex = completingNewToken ? parts.length : parts.length - 1;
 
+    // AutocompleteItem 要求 label（applyCompletion 会读 item.label），description 可选
     const filter = (items: { value: string; description: string }[]) =>
-      items.filter((i) => i.value.startsWith(current));
+      items
+        .filter((i) => i.value.startsWith(current))
+        .map((i) => ({ value: i.value, label: i.value, description: i.description }));
 
     // 第 1 个参数：特殊字 + 各 provider 短名
     if (argIndex === 0) {
@@ -196,7 +199,7 @@ export default function (pi: ExtensionAPI) {
     if (argIndex === 1) {
       const first = parts[0] ?? "";
       const file = resolveProviderFile(first);
-      if (!file) return [{ value: "on", description: "Show" }, { value: "off", description: "Hide" }];
+      if (!file) return filter([{ value: "on", description: "Show" }, { value: "off", description: "Hide" }]);
       const items = file.accounts.map((a) => ({
         value: String(a.planType).toLowerCase(),
         description: a.label ?? String(a.planType),
@@ -207,10 +210,10 @@ export default function (pi: ExtensionAPI) {
     }
 
     // 第 3 个参数：显式 on / off
-    return [
+    return filter([
       { value: "on", description: "Show" },
       { value: "off", description: "Hide" },
-    ];
+    ]);
   }
 
   pi.registerCommand("show-usage", {

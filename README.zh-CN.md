@@ -6,7 +6,7 @@
 
 ## 功能
 
-- `/show-usage [coding|agent|all]` — 分别开关 Coding Plan / Agent Plan 在状态栏的显示
+- `/show-usage [provider] [plan] [on|off] — 控制套餐用量在状态栏的显示（如 `/show-usage ark coding`）
 - 状态栏（右对齐、灰色）：每个额度窗口一条 5 格进度条 + 重置倒计时（`5h` / `d` / `w` / `m`）
 - 每 2 分钟自动刷新（可配置），只刷新已开启的套餐
 - `query_usage` 工具 — 可在对话中让 LLM 帮你查用量
@@ -39,7 +39,7 @@ pi -e git:github.com/sowyer666/pi-plan-usage
 1. 把插件目录下的模板复制为 `config/volcengine.json`：
 
    ```bash
-   cp config/volcengine.example.json config/volcengine.json
+   cp config/ark.example.json config/ark.json
    ```
 
 2. 填入火山引擎 AccessKey（AK/SK）：
@@ -67,12 +67,14 @@ pi -e git:github.com/sowyer666/pi-plan-usage
 ## 使用
 
 ```bash
-/show-usage coding   # 开/关 Coding Plan 状态栏显示
-/show-usage agent    # 开/关 Agent Plan
-/show-usage all      # 全部切换
+/show-usage ark coding   # 开/关 方舟 Coding Plan
+/show-usage ark agent    # 开/关 方舟 Agent Plan
+/show-usage all          # 全部显示
+/show-usage off          # 全部隐藏
+/show-usage status       # 查看当前显隐状态
 ```
 
-关闭某个套餐会清掉它的缓存；再打开时会查询最新数据。
+各套餐显隐互相独立（可同时开启）。关闭某个套餐会清掉它的缓存；再打开时会查询最新数据。
 
 也可以直接对 agent 说："帮我查一下火山用量" — 它会调用 `query_usage` 工具。
 

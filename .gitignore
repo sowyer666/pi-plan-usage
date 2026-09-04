@@ -1,2 +1,3 @@
 node_modules/
-config/volcengine.json
+config/*.json
+!config/*.example.json

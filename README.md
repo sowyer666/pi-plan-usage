@@ -6,7 +6,7 @@ A [pi coding agent](https://github.com/earendil-works/pi) extension that queries
 
 ## What it does
 
-- `/show-usage [coding|agent|all]` — toggle Coding Plan / Agent Plan usage in the status bar
+- `/show-usage [provider] [plan] [on|off] — toggle plan usage in the status bar (e.g. `/show-usage ark coding`)
 - Status bar (right-aligned, dim grey): a 5-slot progress bar plus reset countdown for each quota window (`5h` / `d` / `w` / `m`)
 - Auto-refresh every 2 minutes (configurable), only for the plans you enabled
 - `query_usage` tool — lets the LLM query usage for you in conversation
@@ -39,7 +39,7 @@ pi -e git:github.com/sowyer666/pi-plan-usage
 1. Copy the template in the package directory to `config/volcengine.json`:
 
    ```bash
-   cp config/volcengine.example.json config/volcengine.json
+   cp config/ark.example.json config/ark.json
    ```
 
 2. Fill in your Volcengine AccessKey (AK/SK):
@@ -67,12 +67,14 @@ pi -e git:github.com/sowyer666/pi-plan-usage
 ## Usage
 
 ```bash
-/show-usage coding   # toggle Coding Plan in status bar
-/show-usage agent    # toggle Agent Plan
-/show-usage all      # toggle both
+/show-usage ark coding   # toggle Volcengine Coding Plan
+/show-usage ark agent    # toggle Volcengine Agent Plan
+/show-usage all          # show everything
+/show-usage off          # hide everything
+/show-usage status       # current on/off state
 ```
 
-Turning a plan **off** clears its cache; turning it **on** queries fresh data.
+Plans are independent (several can be on at once). Turning a plan **off** clears its cache; turning it **on** queries fresh data.
 
 Or just ask the agent: *"query my Volcengine usage"* — it will call the `query_usage` tool.
 

@@ -55,8 +55,10 @@ export interface ProviderAccountConfig {
 
 /** 供应商接口 */
 export interface UsageProvider {
-  id: string;
-  displayName: string;
+  id: string;                          // "volcengine-ark"
+  displayName: string;                 // "Volcengine Ark"
+  /** 命令中使用的短名（配置文件名即短名，如 ark → config/ark.json） */
+  shortName: string;
   /** 校验并解析该供应商的凭证配置 */
   parseCredential(config: ProviderAccountConfig): Credential;
   /** 查询用量（快照） */

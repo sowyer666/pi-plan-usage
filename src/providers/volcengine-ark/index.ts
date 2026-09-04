@@ -97,6 +97,7 @@ function normalizeWindows(result: Record<string, unknown>): UsageWindow[] {
 export const volcengineArkProvider: UsageProvider = {
   id: "volcengine-ark",
   displayName: "Volcengine Ark",
+  shortName: "ark",
 
   parseCredential(config: ProviderAccountConfig): Credential {
     const planType = String(config.planType ?? "coding").toLowerCase();

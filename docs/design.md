@@ -4,10 +4,10 @@
 
 ## 1. 背景与目标
 
-本插件是一个 **pi coding agent 插件**（[pi](https://github.com/earendil-works/pi)），用于查询**火山引擎方舟 Coding Plan / Agent Plan** 的**套餐额度**。
+本插件是一个 **pi coding agent 插件**（[pi](https://github.com/earendil-works/pi)），用于查询各 AI 供应商**订阅套餐（Plan）**的额度用量。首个供应商为**火山引擎方舟（Volcengine Ark）**的 Coding Plan / Agent Plan。
 
-- pi 插件机制：pi 支持 TypeScript 扩展，可注册命令（`pi.registerCommand`）、边栏组件（`ctx.ui.setWidget`），以 pi 包（npm / git）形式分发安装。
-- 用户在 pi 中编码时，可通过 `/show-usage` 开关在**边栏**查看套餐额度与重置时间，避免撞限额。
+- pi 插件机制：pi 支持 TypeScript 扩展，可注册命令（`pi.registerCommand`）、自定义 footer（`ctx.ui.setFooter`）、工具（`pi.registerTool`），以 pi 包（npm / git）形式分发安装。
+- 用户在 pi 中编码时，可通过 `/show-usage` 在状态栏查看套餐额度与重置时间，避免撞限额。
 - 后期可能接入更多供应商，架构上做**通用多供应商抽象**。
 
 ## 2. 已确认的需求与决策
@@ -15,8 +15,8 @@
 | # | 决策 | 内容 |
 |---|------|------|
 | D1 | 接口以官方实现为准 | 套餐额度快照：Coding Plan → `GetCodingPlanUsage`，Agent Plan → `GetAFPUsage`（官方 ark-cli 同款 OpenAPI，AK/SK 签名）；仅取**套餐额度**数据 |
-| D2 | UI 形式 | **状态栏显示（每 2 分钟自动刷新，`refreshIntervalSeconds` 可调）**。`/show-usage [coding\|agent\|all]` 分别开关各套餐在底部状态栏（自定义 footer，单行紧凑格式）的显示；自动刷新绕过缓存强制查询；关闭时清缓存，再开即刷新 |
-| D3 | 配置位置 | **插件目录下 `config/` 文件夹**，JSON 按平台建：先只有 `config/volcengine.json`，后续每供应商一个文件 |
+| D2 | UI 形式 | **状态栏显示，自动刷新（默认 2 分钟，可调）**。`/show-usage` 控制显示内容（详见 §5.2 命令设计） |
+| D3 | 配置位置 | **插件目录下 `config/` 文件夹**，JSON 按供应商建：每供应商一个文件，**文件名 = provider 短名**（如 `config/ark.json` → 命令里 `/show-usage ark ...`） |
 | D4 | 数据范围 | 只要**套餐额度**（窗口用量 + 重置时间），不做推理用量明细 |
 
 ## 3. 总体架构
@@ -24,7 +24,8 @@
 ```
 ┌─────────────────────────────────────────────┐
 │  pi 集成层（src/index.ts）                    │
-│  - /show-usage 命令：参数开关各套餐的状态栏显示        │
+│  - /show-usage 命令：状态栏显隐控制            │
+│  - query_usage 工具（供 LLM 查询，次要能力）   │
 ├─────────────────────────────────────────────┤
 │  供应商抽象层（src/providers/types.ts）        │
 │  - UsageProvider 接口 + Provider 注册表       │
@@ -40,33 +41,32 @@
 ```typescript
 /** 通用用量快照：所有供应商查询结果都归一化为此结构 */
 interface UsageSnapshot {
-  providerId: string;          // "volcengine-ark"
-  accountLabel: string;        // 账号显示名（配置中自定义）
-  planType: string;            // "coding" | "agent" | ...
+  providerId: string;
+  accountLabel: string;
+  planType: string;            // 供应商自定义套餐标识，如 "coding" / "agent" / "pro" ...
+  tier?: string;               // 套餐档位，如 "lite" / "pro" / "medium"
+  subscribed: boolean;
   windows: UsageWindow[];      // 各额度窗口
-  fetchedAt: string;           // ISO 时间
-  raw?: unknown;               // 保留原始响应，便于排查
+  fetchedAt: string;
+  raw?: unknown;
 }
 
-/** 额度窗口：5小时 / 周 / 月等 */
+/** 额度窗口：5小时 / 日 / 周 / 月等 */
 interface UsageWindow {
-  kind: "rolling5h" | "weekly" | "monthly" | "other";
-  label: string;               // 展示名
+  kind: "rolling5h" | "daily" | "weekly" | "monthly" | "other";
+  label: string;
   used?: number;
-  remaining?: number;
   total?: number;
+  percent?: number;
   resetAt?: string;            // ISO 重置时间
 }
 
 /** 供应商接口 */
 interface UsageProvider {
   id: string;                          // "volcengine-ark"
-  displayName: string;                 // "火山方舟"
-  /** 校验并解析该供应商的凭证配置 */
+  displayName: string;                 // "Volcengine Ark"
   parseCredential(config: ProviderAccountConfig): Credential;
-  /** 查询用量（快照） */
   queryUsage(cred: Credential, signal?: AbortSignal): Promise<UsageSnapshot>;
-  /** 边栏多行展示 */
   formatWidget(snapshot: UsageSnapshot): string[];
 }
 ```
@@ -100,7 +100,7 @@ interface UsageProvider {
 
 ### 5.1 包形态
 
-以 **pi 包**分发（`pi install git:github.com/...` 或 npm），`package.json` 声明：
+以 **pi 包**分发（`pi install git:github.com/sowyer666/pi-plan-usage` 或 npm），`package.json` 声明：
 
 ```json
 {
@@ -110,33 +110,54 @@ interface UsageProvider {
 }
 ```
 
-### 5.2 交互设计（决策 D2：状态栏 + 参数开关）
+### 5.2 交互设计（决策 D2）
 
-| 能力 | 名称 | 说明 |
-|------|------|------|
-| 命令（核心） | `/show-usage [coding\|agent\|all]` | 分别开关各套餐在底部状态栏的显示；无参/`all` = 全部切换；**关闭时清该套餐缓存，再开 = 强制刷新** |
-| 工具（次要） | `query_usage` | 供 LLM 调用，参数：`account?`（账号名，缺省查全部），返回文本快照 |
+**命令：`/show-usage [provider] [plan] [on|off]`**
 
-状态栏显示（`ctx.ui.setStatus`，单行紧凑格式，`C:` = Coding、`A:` = Agent）：
+- `provider` 可选：供应商 id（如 `ark`），缺省 = 全部已配置供应商
+- `plan` 可选：套餐类型（如 `coding` / `agent`），语义由 provider 定义，缺省 = 该供应商全部套餐
+- 第三个参数可选 `on` / `off`：显式开或关；缺省 = 切换（toggle）
+
+示例（火山场景）：
+
+| 命令 | 行为 |
+|------|------|
+| `/show-usage` | 切换全部已配置供应商、全部套餐的显示 |
+| `/show-usage ark` | 切换方舟全部套餐（coding + agent） |
+| `/show-usage ark coding` | 切换方舟 coding |
+| `/show-usage ark agent` | 切换方舟 agent |
+| `/show-usage ark coding on` | 显示方舟 coding（不动其他） |
+| `/show-usage ark coding off` | 隐藏方舟 coding |
+| `/show-usage off` | 全部隐藏 |
+| `/show-usage status` | 通知当前各供应商/套餐的显隐状态 |
+
+- 无参数、`all` = 全部显示；`off` = 全部隐藏；`status` = 查看显隐状态
+- 同供应商内多个 plan 的显隐互相独立（可同时开启）
+- 显示中的套餐每 `refreshIntervalSeconds` 秒自动刷新，绕过缓存
+
+**工具（次要）：`query_usage`** — 供 LLM 调用，参数：`provider?`、`account?`（label 过滤），返回文本快照。
+
+状态栏显示（自定义 footer，第 3 行右对齐，dim 灰）：
 
 ```
-C:5h 4%·2h57m 周 27%·61h 月 57% | A:未订阅
+C:5h ░░░░░·2h57m w █░░░░·2d m ███░░·2d | A:未订阅
 ```
+
+> 多供应商时，各供应商段落以 ` | ` 分隔；单供应商内多套餐以 ` ` 分隔。标签用套餐 id 缩写。
 
 - 自动刷新：session_start 启动定时器（默认 120s，`refreshIntervalSeconds` 可调），仅刷新已开启的套餐，绕过缓存；session_shutdown 清理定时器
-- 状态栏显示（自定义 footer，第 3 行右对齐，dim 灰）：`C:5h ░░░░░·2h57m w █░░░░·2d m ███░░·2d | A:未订阅`
-- 查询失败显示 `C:查询失败`（错误短缓存 30s 避免高频重试）
+- 查询失败显示 `C:query failed`（错误短缓存 30s 避免高频重试）
 
 ### 5.3 配置（决策 D3）
 
-配置位于**插件目录下 `config/` 文件夹，按平台一个 JSON**，先只有火山：
+配置位于**插件目录下 `config/` 文件夹，按供应商一个 JSON**：
 
 ```
 config/
-└── volcengine.json    # 火山账号配置（多账号）
+└── ark.json    # 火山方舟账号配置（多账号）
 ```
 
-`config/volcengine.json`：
+`config/ark.json`：
 
 ```json
 {
@@ -154,7 +175,8 @@ config/
       "secretAccessKey": "SK..."
     }
   ],
-  "cacheTtlSeconds": 300
+  "cacheTtlSeconds": 300,
+  "refreshIntervalSeconds": 120
 }
 ```
 
@@ -176,21 +198,21 @@ pi-plan-usage/
 ├── docs/                            # 文档（本目录）
 ├── package.json
 ├── tsconfig.json
-├── .gitignore                       # 忽略 config/volcengine.json
+├── .gitignore                       # 忽略 config/ark.json
 ├── config/
 │   ├── volcengine.example.json      # 配置模板（入库）
-│   └── volcengine.json              # 真实配置（不入库，用户填写）
+│   └── ark.json              # 真实配置（不入库，用户填写）
 └── src/
-    ├── index.ts                     # pi 扩展入口（/show-usage、widget、query_usage 工具）
-    ├── config.ts                    # 配置加载与校验（按平台文件）
+    ├── index.ts                     # pi 扩展入口（/show-usage、footer、query_usage 工具）
+    ├── config.ts                    # 配置加载与校验（按供应商文件）
     ├── cache.ts                     # 用量缓存
-    ├── format.ts                    # 快照格式化（边栏多行 / 文本）
+    ├── format.ts                    # 快照格式化（状态栏紧凑行 / 文本）
     └── providers/
         ├── types.ts                 # UsageProvider 抽象 + registry
         └── volcengine-ark/
             ├── index.ts             # provider 实现
             ├── sign.ts              # V4 签名
-            └── api.ts               # OpenAPI 调用（GetInferenceUsage）
+            └── api.ts               # OpenAPI 调用（GetCodingPlanUsage / GetAFPUsage）
 ```
 
 ## 7. 开发计划（每步一个 feat/ 分支，做完即提交）
@@ -198,11 +220,11 @@ pi-plan-usage/
 | 阶段 | 分支 | 内容 |
 |------|------|------|
 | M1 | `feat/ark-provider` | 火山方舟 provider：V4 签名 + `GetCodingPlanUsage`/`GetAFPUsage` 查询 + 归一化，CLI 脚本可独立跑通 |
-| M2 | `feat/show-usage` | pi 扩展入口：`/show-usage` 开关命令 + 边栏 widget + `query_usage` 工具 |
+| M2 | `feat/show-usage` | pi 扩展入口：`/show-usage` 状态栏显隐 + `query_usage` 工具 |
 | M3 | 按需 | 后续供应商接入（暂不做） |
 
 ## 8. 变更记录
 
 版本跟随产品版本（见 AGENTS.md 版本规范），不设独立文档版本。
 
-- **0.1.0**：初版——火山方舟 provider（`GetCodingPlanUsage`/`GetAFPUsage` 查询套餐额度）；`/show-usage [coding|agent|all]` 状态栏显示开关（5 格进度条 + 分级时间格式，右对齐，2 分钟自动刷新）+ `query_usage` 工具；配置在插件目录 `config/` 按平台建 JSON。
+- **0.1.0**：初版——火山方舟 provider（`GetCodingPlanUsage`/`GetAFPUsage` 查询套餐额度）；`/show-usage` 状态栏显示开关（5 格进度条 + 分级时间格式，右对齐，2 分钟自动刷新）+ `query_usage` 工具；配置在插件目录 `config/` 按平台建 JSON。

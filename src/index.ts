@@ -1,27 +1,35 @@
 /**
  * pi-plan-usage — pi 扩展入口
  *
- * - /show-usage [coding|agent|all]：分别开关 Coding Plan / Agent Plan 在底部状态栏的显示。
- *   通过 setFooter 自定义 footer：复刻默认信息（pwd / token 统计 / 模型名 / 其他扩展状态），
- *   用量文本整体**右对齐**在扩展状态行右侧。
- *   关闭 = 清缓存，再开 = 强制刷新；不自动轮询（设计决策 D2）。
- * - query_usage 工具：供 LLM 查询用量，返回文本快照
- * - 结果缓存（默认 5 分钟）避免重复打 API
+ * - /show-usage [provider] [plan] [on|off]：按供应商/套餐控制状态栏显示。
+ *   provider 短名与配置文件名一致（ark → config/ark.json）。
+ *   缺省 provider = 全部；缺省 plan = 该 provider 全部套餐；
+ *   第三个参数显式 on/off，缺省为 toggle（范围内任一开启则全关，否则全开）。
+ *   特殊字：all = 全部显示，off = 全部隐藏，status = 查看当前显隐状态。
+ * - 状态栏（自定义 footer）每 refreshIntervalSeconds 自动刷新，仅刷新已开启的套餐。
+ * - query_usage 工具：供 LLM 查询用量，返回文本快照。
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
-import { loadConfig } from "./config.ts";
+import { loadAllConfigs, type ProviderFileConfig } from "./config.ts";
 import { TTLCache } from "./cache.ts";
 import { registry, type UsageSnapshot } from "./providers/types.ts";
 import { formatCompactLine, formatSnapshotText } from "./format.ts";
 // 火山方舟 provider（import 触发注册）
 import "./providers/volcengine-ark/index.ts";
 
+/** 一个可显示的"供应商+套餐"目标 */
+interface UsageTarget {
+  providerId: string;
+  shortName: string;
+  planType: string;
+  cacheTtlSeconds: number;
+}
+
 const STATUS_KEY = "volcengine-usage";
-type PlanType = "coding" | "agent";
 
 /** k/M 紧凑数字（与 pi 默认 footer 一致） */
 function formatTokens(count: number): string {
@@ -32,9 +40,14 @@ function formatTokens(count: number): string {
   return `${Math.round(count / 1_000_000)}M`;
 }
 
+/** 状态栏里套餐标签：planType 首字母大写（coding→C, agent→A, pro→P） */
+function planTag(planType: string): string {
+  return planType.charAt(0).toUpperCase() + planType.slice(1, 2);
+}
+
 export default function (pi: ExtensionAPI) {
-  // 各 plan 在状态栏的开关状态（会话内有效）
-  const enabled: Record<PlanType, boolean> = { coding: false, agent: false };
+  // 显隐状态：key = `${providerId}:${planType}`（会话内有效）
+  const enabled = new Map<string, boolean>();
   // 缓存放在闭包里，随扩展实例生命周期存在
   let cache = new TTLCache<UsageSnapshot | Error>();
   // 当前用量右对齐文本（空 = 不显示）
@@ -42,23 +55,68 @@ export default function (pi: ExtensionAPI) {
   // 状态栏自动刷新定时器（session_start 启动，session_shutdown 清理）
   let refreshTimer: ReturnType<typeof setInterval> | undefined;
 
-  /** 查询指定 planType 的账号（取配置中第一个匹配项）；force = 绕过缓存强制查询 */
-  async function queryPlan(planType: PlanType, force = false): Promise<UsageSnapshot | Error> {
-    const config = loadConfig();
-    const ttlMs = config.cacheTtlSeconds * 1000;
-    const acc = config.accounts.find((a) => String(a.planType).toLowerCase() === planType);
-    if (!acc) return new Error(`No ${planType} account in config`);
+  /** 全部配置的供应商文件 */
+  function allProviderFiles(): ProviderFileConfig[] {
+    return loadAllConfigs().providers;
+  }
 
-    const provider = registry.get("volcengine-ark");
-    if (!provider) return new Error("provider volcengine-ark not registered");
+  /** 命令 token → provider 文件（匹配 shortName 或完整 id），不匹配返回 undefined */
+  function resolveProviderFile(token: string): ProviderFileConfig | undefined {
+    const t = token.toLowerCase();
+    return allProviderFiles().find((p) => {
+      const provider = registry.get(providerIdFor(p.shortName));
+      return p.shortName === t || provider?.id === t || provider?.id.endsWith(`-${t}`);
+    });
+  }
+
+  /** 短名 → 完整 provider id：registry 里 shortName 或 id 尾段匹配 */
+  function providerIdFor(shortName: string): string {
+    for (const [id, p] of registry) {
+      if (p.shortName === shortName || id === shortName || id.endsWith(`-${shortName}`)) return id;
+    }
+    return shortName;
+  }
+
+  /** 计算命令作用的目标集合 */
+  function resolveTargets(providerToken?: string, planToken?: string): UsageTarget[] {
+    const files = providerToken ? [resolveProviderFile(providerToken)] : allProviderFiles();
+    const targets: UsageTarget[] = [];
+    for (const file of files) {
+      if (!file) continue;
+      const providerId = providerIdFor(file.shortName);
+      for (const acc of file.accounts) {
+        const planType = String(acc.planType).toLowerCase();
+        if (planToken && planType !== planToken.toLowerCase()) continue;
+        targets.push({
+          providerId,
+          shortName: file.shortName,
+          planType,
+          cacheTtlSeconds: file.cacheTtlSeconds,
+        });
+      }
+    }
+    return targets;
+  }
+
+  /** 查询指定 provider+plan；force = 绕过缓存强制查询 */
+  async function queryTarget(
+    target: UsageTarget,
+    force = false,
+  ): Promise<UsageSnapshot | Error> {
+    const provider = registry.get(target.providerId);
+    if (!provider) return new Error(`provider ${target.providerId} not registered`);
+
+    const file = allProviderFiles().find((p) => p.shortName === target.shortName);
+    const acc = file?.accounts.find((a) => String(a.planType).toLowerCase() === target.planType);
+    if (!acc) return new Error(`no ${target.planType} account for ${target.shortName}`);
 
     const cred = provider.parseCredential(acc);
-    const key = `${provider.id}:${planType}`;
+    const key = `${target.providerId}:${target.planType}`;
     let cached = force ? undefined : cache.get(key);
     if (!cached) {
       try {
         cached = await provider.queryUsage(cred);
-        cache.set(key, cached, ttlMs);
+        cache.set(key, cached, target.cacheTtlSeconds * 1000);
       } catch (e) {
         cached = e instanceof Error ? e : new Error(String(e));
         cache.set(key, cached, 30_000); // 错误短缓存，避免高频重试
@@ -67,58 +125,132 @@ export default function (pi: ExtensionAPI) {
     return cached;
   }
 
-  /** 按当前开关状态更新用量右对齐文本。
-   * refreshGen 世代号：并发刷新时（快速连续 toggle / 定时器与手动切换重叠），
-   * 只有最新一代的结果允许写入 usageRightText，旧请求返回后直接丢弃，避免旧状态残留。 */
-  let refreshGen = 0;
+  /** 按当前显隐状态更新用量右对齐文本 */
   async function refreshUsageText(force = false): Promise<void> {
-    const gen = ++refreshGen;
-    const parts: string[] = [];
-    for (const plan of ["coding", "agent"] as PlanType[]) {
-      if (!enabled[plan]) continue;
-      const snap = await queryPlan(plan, force);
-      if (gen !== refreshGen) return; // 已有更新的刷新在跑，丢弃本次结果
-      const tag = plan === "coding" ? "C" : "A";
-      parts.push(snap instanceof Error ? `${tag}:query failed` : `${tag}:${formatCompactLine(snap)}`);
+    // 按 provider 分组拼接：单 provider 段落间 " | "，段内各套餐 " "
+    const byProvider = new Map<string, UsageTarget[]>();
+    for (const [key, on] of enabled) {
+      if (!on) continue;
+      const [providerId, planType] = key.split(":");
+      const provider = registry.get(providerId);
+      const shortName = provider?.shortName ?? providerId;
+      const file = allProviderFiles().find((p) => p.shortName === shortName);
+      const target: UsageTarget = {
+        providerId,
+        shortName,
+        planType,
+        cacheTtlSeconds: file?.cacheTtlSeconds ?? 300,
+      };
+      const list = byProvider.get(shortName) ?? [];
+      list.push(target);
+      byProvider.set(shortName, list);
     }
-    if (gen !== refreshGen) return;
-    usageRightText = parts.join(" | ");
+
+    const segments: string[] = [];
+    for (const [shortName, targets] of byProvider) {
+      const parts: string[] = [];
+      for (const t of targets) {
+        const snap = await queryTarget(t, force);
+        const tag = planTag(t.planType);
+        parts.push(snap instanceof Error ? `${tag}:query failed` : `${tag}:${formatCompactLine(snap)}`);
+      }
+      // 多 provider 时段落前加短名，避免标签歧义
+      segments.push((byProvider.size > 1 ? `${shortName} ` : "") + parts.join(" "));
+    }
+    usageRightText = segments.join(" | ");
+  }
+
+  /** 是否有任何套餐开启 */
+  function anyEnabled(): boolean {
+    for (const v of enabled.values()) if (v) return true;
+    return false;
   }
 
   pi.registerCommand("show-usage", {
-    description: "Switch status bar usage display: /show-usage [coding|agent|all|off]",
+    description: "Status bar plan usage: /show-usage [provider] [plan] [on|off] | all | off | status",
     handler: async (args, ctx) => {
-      const arg = (args ?? "").trim().toLowerCase();
-      if (!arg || arg === "all") {
-        enabled.coding = enabled.agent = true;
-      } else if (arg === "off" || arg === "none") {
-        enabled.coding = enabled.agent = false;
-      } else if (arg === "coding" || arg === "c") {
-        // 互斥切换：开启一个套餐时自动关闭另一个；已开启则关闭
-        const next = !enabled.coding;
-        enabled.coding = next;
-        enabled.agent = false;
-      } else if (arg === "agent" || arg === "a") {
-        const next = !enabled.agent;
-        enabled.agent = next;
-        enabled.coding = false;
-      } else {
-        ctx.ui.notify("Usage: /show-usage [coding|agent|all|off]", "info");
+      const tokens = (args ?? "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+
+      // 特殊字
+      if (tokens[0] === "status") {
+        const lines: string[] = [];
+        for (const file of allProviderFiles()) {
+          const plans = file.accounts.map((a) => String(a.planType).toLowerCase());
+          const states = plans.map((p) => `${p}:${enabled.get(`${providerIdFor(file.shortName)}:${p}`) ? "on" : "off"}`);
+          lines.push(`${file.shortName} ${states.join(" ")}`);
+        }
+        ctx.ui.notify(lines.join(" | ") || "No provider config", "info");
+        return;
+      }
+      if (tokens[0] === "off") {
+        for (const key of [...enabled.keys()]) enabled.set(key, false);
+        usageRightText = "";
+        ctx.ui.notify("Usage display turned off", "info");
         return;
       }
 
-      // 关闭 = 清该 plan 的缓存，下次打开强制刷新
-      const off: PlanType[] = [];
-      if (!enabled.coding) off.push("coding");
-      if (!enabled.agent) off.push("agent");
-      for (const plan of off) cache.delete(`volcengine-ark:${plan}`);
+      let providerToken: string | undefined;
+      let planToken: string | undefined;
+      let action: "toggle" | "on" | "off" = "toggle";
+
+      for (const t of tokens) {
+        if ((t === "on" || t === "off" || t === "toggle") && (providerToken || planToken)) {
+          action = t as typeof action;
+        } else if (!providerToken) {
+          providerToken = t;
+        } else if (!planToken) {
+          planToken = t;
+        } else {
+          ctx.ui.notify("Usage: /show-usage [provider] [plan] [on|off] | all | off | status", "info");
+          return;
+        }
+      }
+
+      // 特殊：/show-usage all = 全部显示
+      if (providerToken === "all") {
+        providerToken = undefined;
+        action = "on";
+      }
+      // 第一个 token 不是已知 provider 且第二个 token 也是普通词 → 可能用户直接写了 plan
+      if (providerToken && !resolveProviderFile(providerToken)) {
+        if (!planToken && allProviderFiles().some((f) => f.accounts.some((a) => String(a.planType).toLowerCase() === providerToken))) {
+          // 如 "/show-usage coding"：把 token 当 plan，作用于全部 provider
+          planToken = providerToken;
+          providerToken = undefined;
+        } else {
+          const names = allProviderFiles().map((f) => f.shortName).join(", ");
+          ctx.ui.notify(`Unknown provider "${providerToken}". Available: ${names}`, "error");
+          return;
+        }
+      }
+
+      const targets = resolveTargets(providerToken, planToken);
+      if (targets.length === 0) {
+        ctx.ui.notify(
+          `No matching target${providerToken ? ` for ${providerToken}` : ""}${planToken ? ` plan ${planToken}` : ""}`,
+          "error",
+        );
+        return;
+      }
+
+      // toggle 语义：范围内任一开启 → 全关；否则全开
+      let next: boolean;
+      if (action === "toggle") {
+        next = !targets.some((t) => enabled.get(`${t.providerId}:${t.planType}`));
+      } else {
+        next = action === "on";
+      }
+      for (const t of targets) {
+        const key = `${t.providerId}:${t.planType}`;
+        if (!next) cache.delete(key); // 关闭 = 清缓存，再开强制刷新
+        enabled.set(key, next);
+      }
 
       try {
-        // 强制刷新：开关切换后的状态栏必须反映最新状态与最新数据
-        await refreshUsageText(true);
+        await refreshUsageText(next); // 全开时强制刷新，关闭项走已有缓存也无妨
         ctx.ui.notify(
-          enabled.coding || enabled.agent
-            ? `Usage display: ${[enabled.coding ? "coding" : null, enabled.agent ? "agent" : null].filter(Boolean).join(" + ")}`
+          anyEnabled()
+            ? `Usage display: ${[...enabled.entries()].filter(([, v]) => v).map(([k]) => k.split(":")[1]).join(", ")}`
             : "Usage display turned off",
           "info",
         );
@@ -133,16 +265,16 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", (_event, ctx) => {
     if (ctx.mode !== "tui") return;
 
-    // 状态栏自动刷新定时器（默认 2 分钟；后台静默失败，不打断 UI）
+    // 状态栏自动刷新定时器（取各供应商 refreshIntervalSeconds 最小值；后台静默失败）
     if (!refreshTimer) {
       let intervalMs = 120_000;
       try {
-        intervalMs = loadConfig().refreshIntervalSeconds * 1000;
+        intervalMs = loadAllConfigs().refreshIntervalSeconds * 1000;
       } catch {
         // 配置不可用时用默认值
       }
       refreshTimer = setInterval(async () => {
-        if (enabled.coding || enabled.agent) {
+        if (anyEnabled()) {
           await refreshUsageText(true).catch(() => {});
           ctx.ui.notify("", "info"); // 空通知仅用于触发 TUI 重绘，让状态栏拿到新数据
         }
@@ -202,7 +334,7 @@ export default function (pi: ExtensionAPI) {
 
         let statsLeft = statsParts.join(" ");
         const modelName = ctx.model?.id ?? "no-model";
-        let rightSide = ctx.model?.reasoning
+        const rightSide = ctx.model?.reasoning
           ? ctx.thinkingLevel === "off"
             ? `${modelName} • thinking off`
             : `${modelName} • ${ctx.thinkingLevel}`
@@ -269,48 +401,54 @@ export default function (pi: ExtensionAPI) {
     name: "query_usage",
     label: "Query plan usage",
     description:
-      "Query Volcengine Ark Coding Plan / Agent Plan quota usage (5h/day/week/month windows, used quota, reset time). " +
-      "account is optional, the account label in config (e.g. \"火山Coding\"), defaults to all accounts.",
+      "Query AI plan quota usage (5h/day/week/month windows, used quota, reset time). " +
+      "provider is optional (e.g. \"ark\"), account label filter is optional, defaults to all.",
     parameters: Type.Object({
+      provider: Type.Optional(Type.String({ description: "Provider short name (e.g. ark)" })),
       account: Type.Optional(Type.String({ description: "Filter by account label (substring match)" })),
     }),
     async execute(_toolCallId, params, _signal) {
       try {
-        const config = loadConfig();
+        const config = loadAllConfigs();
         const filter = params?.account;
-        const accounts = filter
-          ? config.accounts.filter((a) => (a.label ?? "").includes(filter))
-          : config.accounts;
-        if (accounts.length === 0) {
-          return { content: [{ type: "text", text: `No matching account: ${filter}` }], details: {} };
+        const files = params?.provider
+          ? config.providers.filter((p) => p.shortName === params.provider!.toLowerCase())
+          : config.providers;
+        if (files.length === 0) {
+          return { content: [{ type: "text", text: `No matching provider: ${params?.provider}` }], details: {} };
         }
 
         const parts: string[] = [];
         await Promise.allSettled(
-          accounts.map(async (acc) => {
-            const provider = registry.get("volcengine-ark");
-            if (!provider) {
-              parts.push(`❌ Account[${acc.label ?? acc.planType}]: provider volcengine-ark not registered`);
-              return;
-            }
-            const cred = provider.parseCredential(acc);
-            const key = `${provider.id}:${cred.accountLabel}`;
-            let cached = cache.get(key);
-            if (!cached) {
-              try {
-                cached = await provider.queryUsage(cred);
-                cache.set(key, cached, config.cacheTtlSeconds * 1000);
-              } catch (e) {
-                cached = e instanceof Error ? e : new Error(String(e));
-                cache.set(key, cached, 30_000);
-              }
-            }
-            parts.push(
-              cached instanceof Error
-                ? `❌ ${cred.accountLabel}: ${cached.message}`
-                : formatSnapshotText(cached),
-            );
-            parts.push("");
+          files.flatMap((file) => {
+            const providerId = providerIdFor(file.shortName);
+            const provider = registry.get(providerId);
+            return file.accounts
+              .filter((a) => !filter || (a.label ?? "").includes(filter))
+              .map(async (acc) => {
+                if (!provider) {
+                  parts.push(`❌ Account[${acc.label ?? acc.planType}]: provider ${providerId} not registered`);
+                  return;
+                }
+                const cred = provider.parseCredential(acc);
+                const key = `${providerId}:${cred.accountLabel}`;
+                let cached = cache.get(key);
+                if (!cached) {
+                  try {
+                    cached = await provider.queryUsage(cred);
+                    cache.set(key, cached, file.cacheTtlSeconds * 1000);
+                  } catch (e) {
+                    cached = e instanceof Error ? e : new Error(String(e));
+                    cache.set(key, cached, 30_000);
+                  }
+                }
+                parts.push(
+                  cached instanceof Error
+                    ? `❌ ${cred.accountLabel}: ${cached.message}`
+                    : formatSnapshotText(cached),
+                );
+                parts.push("");
+              });
           }),
         );
         return { content: [{ type: "text", text: parts.join("\n").trimEnd() }], details: {} };

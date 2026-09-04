@@ -99,15 +99,24 @@ export default function (pi: ExtensionAPI) {
       if (!enabled.agent) off.push("agent");
       for (const plan of off) cache.delete(`volcengine-ark:${plan}`);
 
-      await refreshUsageText();
+      try {
+        await refreshUsageText();
+        ctx.ui.notify(
+          enabled.coding || enabled.agent
+            ? `用量显示: ${[enabled.coding ? "coding" : null, enabled.agent ? "agent" : null].filter(Boolean).join(" + ")}`
+            : "用量显示已全部关闭",
+          "info",
+        );
+      } catch (e) {
+        ctx.ui.notify(`查询失败: ${e instanceof Error ? e.message : String(e)}`, "error");
+      }
     },
   });
 
-  // 自定义 footer：复刻默认 3 行 + 用量文本右对齐在扩展状态行
+  // 自定义 footer：复刻默认 3 行 + 用量文本右对齐在扩展状态行。
+  // 注意：这里只注册一次命令；footer 在 session_start 时重设（session 替换后旧 footer 会被清理）。
   pi.on("session_start", (_event, ctx) => {
     if (ctx.mode !== "tui") return;
-
-    pi.registerCommand("show-usage", { description: "", handler: async () => {} }); // 占位避免重复注册报错（幂等）
 
     ctx.ui.setFooter((_tui, theme, footerData) => ({
       invalidate() {},

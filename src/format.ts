@@ -67,24 +67,32 @@ export function formatWidgetLines(snapshot: UsageSnapshot): string[] {
   return lines;
 }
 
-/** 快照 → 状态栏紧凑单行（不含账号标签）；标签 d/w/m，百分比保留 1 位小数 */
+/** 快照 → 状态栏紧凑单行（不含账号标签）；5 格横向进度条 + 重置时间，无百分比 */
 export function formatCompactLine(snapshot: UsageSnapshot): string {
   if (!snapshot.subscribed) return "未订阅";
   return snapshot.windows
     .map((w) => {
     const label =
       w.kind === "rolling5h" ? "5h" : w.kind === "daily" ? "d" : w.kind === "weekly" ? "w" : w.kind === "monthly" ? "m" : w.label;
-    // 优先用 used/total 精确计算，保留 1 位小数
+    // 优先用 used/total 精确计算
     const pct =
       w.used !== undefined && w.total
         ? (w.used / w.total) * 100
         : w.percent !== undefined
           ? w.percent
           : undefined;
-    const reset = w.resetAt ? relativeTime(w.resetAt) : "";
-    return `${label}${pct !== undefined ? ` ${pct.toFixed(1)}%` : ""}${reset ? `·${reset}` : ""}`;
+    const bar = renderMiniBar(pct);
+    const reset = w.resetAt ? `·${relativeTime(w.resetAt)}` : "";
+    return `${label} ${bar}${reset}`;
   })
     .join(" ");
+}
+
+/** 5 字符横向进度条：█ 已填，░ 未填（不足 1 格不填） */
+function renderMiniBar(pct: number | undefined, width = 5): string {
+  if (pct === undefined || Number.isNaN(pct)) return "░".repeat(width);
+  const filled = Math.min(width, Math.max(0, Math.round((pct / 100) * width)));
+  return "█".repeat(filled) + "░".repeat(width - filled);
 }
 
 /** 快照 → 单段文本 */

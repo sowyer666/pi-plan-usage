@@ -18,8 +18,12 @@ export function renderBar(w: UsageWindow, width = 10): string {
   return "▓".repeat(filled) + "░".repeat(width - filled);
 }
 
-/** 相对时间：≥24h 显示 "2d13h"；<24h 显示 "2h57m"；<1h 显示 "30m"（过去式加“前”） */
-export function relativeTime(iso: string): string {
+/**
+ * 相对时间。
+ * 默认（5h/d 窗口）：≥24h 显示 "2d13h"；<24h 显示 "2h57m"；<1h 显示 "30m"
+ * daysOnly（w/m 窗口）：≥24h 只显示 "2d"；不足 24h 才显示 "5h30m"/"30m"
+ */
+export function relativeTime(iso: string, daysOnly = false): string {
   const diff = new Date(iso).getTime() - Date.now();
   if (Number.isNaN(diff)) return "";
   const abs = Math.abs(diff);
@@ -27,9 +31,11 @@ export function relativeTime(iso: string): string {
   const h = Math.floor((abs % 86_400_000) / 3_600_000);
   const m = Math.floor((abs % 3_600_000) / 60_000);
   let span: string;
-  if (d > 0) span = `${d}d${h}h`;
-  else if (h > 0) span = `${h}h${m}m`;
-  else span = `${m}m`;
+  if (daysOnly) {
+    span = d > 0 ? `${d}d` : h > 0 ? `${h}h${m}m` : `${m}m`;
+  } else {
+    span = d > 0 ? `${d}d${h}h` : h > 0 ? `${h}h${m}m` : `${m}m`;
+  }
   return diff >= 0 ? span : `${span}前`;
 }
 
@@ -86,7 +92,9 @@ export function formatCompactLine(snapshot: UsageSnapshot): string {
           ? w.percent
           : undefined;
     const bar = renderMiniBar(pct);
-    const reset = w.resetAt ? `·${relativeTime(w.resetAt)}` : "";
+    // 周/月窗口只显示天数，不足 24h 才显示小时
+    const daysOnly = w.kind === "weekly" || w.kind === "monthly";
+    const reset = w.resetAt ? `·${relativeTime(w.resetAt, daysOnly)}` : "";
     return `${label} ${bar}${reset}`;
   })
     .join(" ");

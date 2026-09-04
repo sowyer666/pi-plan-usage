@@ -18,14 +18,18 @@ export function renderBar(w: UsageWindow, width = 10): string {
   return "▓".repeat(filled) + "░".repeat(width - filled);
 }
 
-/** 相对时间：如 "4h12m"、"30m"（未来）/ "10m前"（过去） */
+/** 相对时间：≥24h 显示 "2d13h"；<24h 显示 "2h57m"；<1h 显示 "30m"（过去式加“前”） */
 export function relativeTime(iso: string): string {
   const diff = new Date(iso).getTime() - Date.now();
   if (Number.isNaN(diff)) return "";
   const abs = Math.abs(diff);
-  const h = Math.floor(abs / 3_600_000);
+  const d = Math.floor(abs / 86_400_000);
+  const h = Math.floor((abs % 86_400_000) / 3_600_000);
   const m = Math.floor((abs % 3_600_000) / 60_000);
-  const span = h > 0 ? `${h}h${String(m).padStart(2, "0")}m` : `${m}m`;
+  let span: string;
+  if (d > 0) span = `${d}d${h}h`;
+  else if (h > 0) span = `${h}h${m}m`;
+  else span = `${m}m`;
   return diff >= 0 ? span : `${span}前`;
 }
 

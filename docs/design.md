@@ -14,7 +14,7 @@
 
 | # | 决策 | 内容 |
 |---|------|------|
-| D1 | 接口以官方文档为准 | https://docs.volcengine.com/docs/82379/2116766?lang=zh （查询推理用量，`GetInferenceUsage`），仅取**套餐额度**数据 |
+| D1 | 接口以官方实现为准 | 套餐额度快照：Coding Plan → `GetCodingPlanUsage`，Agent Plan → `GetAFPUsage`（官方 ark-cli 同款 OpenAPI，AK/SK 签名）；仅取**套餐额度**数据 |
 | D2 | UI 形式 | **不自动刷新、不用状态栏**。`/show-usage` 开关命令：执行显示边栏（widget），再执行隐藏。打开时查询一次（带缓存） |
 | D3 | 配置位置 | **插件目录下 `config/` 文件夹**，JSON 按平台建：先只有 `config/volcengine.json`，后续每供应商一个文件 |
 | D4 | 数据范围 | 只要**套餐额度**（窗口用量 + 重置时间），不做推理用量明细 |
@@ -78,12 +78,12 @@ interface UsageProvider {
 
 ### 4.1 官方接口
 
-- **`GetInferenceUsage`（查询推理用量）** — 唯一依据文档：
-  https://docs.volcengine.com/docs/82379/2116766?lang=zh
+- **`GetCodingPlanUsage`（Coding Plan 套餐额度）** / **`GetAFPUsage`（Agent Plan 套餐额度）**
+- 依据：火山官方 ark-cli 的 `usage plan` 底层接口（https://github.com/volcengine/ark-cli），返回 `periods`：`5h`/`session`、`weekly`、`monthly` 的 `used`/`total`/`percent`/`reset_at`；Coding Plan 为 `QuotaUsage` 数组（`Label/Level` + `Percent` + `UpdateTimestamp`）
 - 网关：`https://open.volcengineapi.com`
 - Service：`ark`，Version：`2024-01-01`，Region：`cn-beijing`
-- 请求方式：火山引擎 OpenAPI 通用规范（V4 签名，HMAC-SHA256）
-- ⚠️ 具体请求参数与响应字段开发时**以该文档正文为准**，不臆造字段
+- 请求方式：火山引擎 OpenAPI 通用规范（V4 签名，HMAC-SHA256，空 POST）
+- 响应字段解析做防御性兼容（大小写、秒/毫秒时间戳），`raw` 保留原始响应便于排查
 
 ### 4.2 凭证
 
@@ -93,8 +93,8 @@ interface UsageProvider {
 
 ### 4.3 查询逻辑
 
-1. 调用 `GetInferenceUsage` 获取套餐额度数据（5h / 周 / 月窗口用量、剩余次数、重置时间）
-2. 归一化为 `UsageSnapshot` 返回
+1. 按账号 `planType` 分发：`coding` → `GetCodingPlanUsage`；`agent` → `GetAFPUsage`
+2. 归一化为 `UsageSnapshot`（窗口标签 `5h`/`session`/`weekly`/`monthly` + 用量/百分比 + 重置时间）
 3. 不做推理用量明细统计（决策 D4）
 
 ## 5. pi 插件集成
@@ -200,7 +200,7 @@ pi-volcengine-usage/
 
 | 阶段 | 分支 | 内容 |
 |------|------|------|
-| M1 | `feat/ark-provider` | 火山方舟 provider：V4 签名 + `GetInferenceUsage` 查询 + 归一化，CLI 脚本可独立跑通 |
+| M1 | `feat/ark-provider` | 火山方舟 provider：V4 签名 + `GetCodingPlanUsage`/`GetAFPUsage` 查询 + 归一化，CLI 脚本可独立跑通 |
 | M2 | `feat/show-usage` | pi 扩展入口：`/show-usage` 开关命令 + 边栏 widget + `query_usage` 工具 |
 | M3 | 按需 | 后续供应商接入（暂不做） |
 

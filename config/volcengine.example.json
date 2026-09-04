@@ -1,0 +1,17 @@
+{
+  "accounts": [
+    {
+      "label": "火山Coding",
+      "planType": "coding",
+      "accessKeyId": "AKTxxxxxxxxxxxxxxxx",
+      "secretAccessKey": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    {
+      "label": "火山Agent",
+      "planType": "agent",
+      "accessKeyId": "$VOLC_AK",
+      "secretAccessKey": "$VOLC_SK"
+    }
+  ],
+  "cacheTtlSeconds": 300
+}

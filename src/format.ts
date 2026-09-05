@@ -39,7 +39,7 @@ export function relativeTime(iso: string, daysOnly = false): string {
   return diff >= 0 ? span : `${span} ago`;
 }
 
-/** 窗口描述：如 "320/1200 · 4h12m重置" 或 "42%" */
+/** 窗口描述：如 "320/1200 reset in 2h57m" 或 "42%" */
 export function describeWindow(w: UsageWindow): string {
   const parts: string[] = [];
   if (w.used !== undefined && w.total !== undefined) {
@@ -60,7 +60,7 @@ function pad(s: string, n: number): string {
   return s.length >= n ? s : s + " ".repeat(n - s.length);
 }
 
-/** 快照 → 边栏多行文本 */
+/** 快照 → 多行展示（query_usage 工具/CLI 输出用） */
 export function formatWidgetLines(snapshot: UsageSnapshot): string[] {
   const lines: string[] = [];
   const head = `📊 ${snapshot.accountLabel} (${snapshot.planType}${snapshot.tier ? " · " + snapshot.tier : ""})`;
@@ -77,7 +77,7 @@ export function formatWidgetLines(snapshot: UsageSnapshot): string[] {
   return lines;
 }
 
-/** 快照 → 状态栏紧凑单行（不含账号标签）；5 格横向进度条 + 重置时间，无百分比 */
+/** 快照 → 状态栏紧凑单行（无账号标签）：5 格进度条 + 重置时间，无百分比 */
 export function formatCompactLine(snapshot: UsageSnapshot): string {
   if (!snapshot.subscribed) return "none";
   return snapshot.windows

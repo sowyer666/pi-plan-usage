@@ -2,9 +2,9 @@
  * pi-plan-usage — 在 pi 状态栏显示各 AI 供应商订阅套餐用量。
  *
  * 命令：
- *   /show-usage [provider] [plan] [on|off]   切换/设置状态栏用量显示
- *   /show-usage all | off | status           全部显示 / 全部隐藏 / 查看状态
- *   无参：帮助 + 当前显隐状态
+ *   /show-usage            打开交互式选择菜单（provider → plan → 切换）
+ *   /show-usage <args>     带参数直接执行，如 /show-usage ark coding on
+ *                          （args: [provider] [plan] [on|off]，或 all / off / status）
  *
  * provider 短名 = config/<短名>.json 的文件名（如 ark → config/ark.json）。
  * plan 由各供应商定义（方舟：coding / agent）。
@@ -12,8 +12,7 @@
  *
  * 实现要点：
  * - 用 provider 抽象（providers/types.ts），新增供应商 = 一个实现 + 一个配置文件。
- * - 参数补全走 pi 原生 getArgumentCompletions，候选 value 携带完整参数路径
- *   （"ark coding on"），因为 pi 应用补全时替换整个参数区——完整路径保证不丢已输参数。
+ * - 状态栏用自定义 footer（复刻 pi 默认布局），用量文本右对齐在第 3 行。
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";

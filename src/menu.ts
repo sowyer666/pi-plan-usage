@@ -59,7 +59,7 @@ class UsageMenu extends Container {
       ...this.providers.map((f) => ({
         value: f.shortName,
         label: f.shortName,
-        description: `${this.theme.fg("muted", "")}${f.accounts.map((a) => a.label ?? a.planType).join(", ")}`,
+        description: f.accounts.map((a) => a.label ?? a.planType).join(", "),
       })),
       { value: "all", label: "all", description: "Show everything" },
       { value: "off", label: "off", description: "Hide everything" },
@@ -77,7 +77,7 @@ class UsageMenu extends Container {
       return {
         value: `${provider.shortName} ${plan}`,
         label: `${plan} (${state})`,
-        description: `${a.label ?? ""} ${state === "on" ? "●" : "○"} click to toggle`,
+        description: a.label ?? "",
       };
     });
     items.push(

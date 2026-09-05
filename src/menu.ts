@@ -33,15 +33,7 @@ export function showUsageMenu(
       new UsageMenu(providers, isOn, theme as unknown as MenuTheme, done, () =>
         tui.requestRender(),
       ),
-    {
-      overlay: true,
-      overlayOptions: {
-        width: "45%",
-        minWidth: 34,
-        maxHeight: "70%",
-        anchor: "center",
-      },
-    },
+    // 不用 overlay：与 /model 等原生选择器一致，菜单替换编辑器区域显示（位置合理、自动获得焦点）
   );
 }
 

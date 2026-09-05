@@ -24,6 +24,7 @@ import { loadAllConfigs, type ProviderFileConfig } from "./config.ts";
 import { TTLCache } from "./cache.ts";
 import { registry, type UsageSnapshot } from "./providers/types.ts";
 import { formatCompactLine, formatSnapshotText } from "./format.ts";
+import { showUsageMenu } from "./menu.ts";
 // import 即触发注册
 import "./providers/volcengine-ark/index.ts";
 
@@ -170,143 +171,108 @@ export default function (pi: ExtensionAPI) {
     usageRightText = segments.join(" | ");
   }
 
-  /**
-   * /show-usage 参数补全。候选 value 携带完整参数路径（如 "ark coding on"）：
-   * pi 应用补全时替换整个参数区，完整路径才能保留已输入的参数。
-   * 匹配：候选以已输入的完整参数文本为前缀（保留尾随空格判断当前层）。
-   */
-  function argumentCompletions(argumentText: string) {
-    const typed = argumentText.toLowerCase();
-    const trimmed = typed.trim();
-    if (trimmed === "") {
-      // 刚开始第 1 层（无内容或仅空格）
-    }
-    const hasTrailingSpace = trimmed !== "" && typed.endsWith(" ");
-    const tokens = trimmed === "" ? [] : trimmed.split(/\s+/);
-    const argIndex = tokens.length === 0 ? 0 : hasTrailingSpace ? tokens.length : tokens.length - 1;
-    // 第 1 层（特殊字 + provider 短名）
-    if (argIndex === 0) {
-      const items: { value: string; label: string; description?: string }[] = [
-        { value: "all", label: "all", description: "Show all providers and plans" },
-        { value: "off", label: "off", description: "Hide everything" },
-        { value: "status", label: "status", description: "Show current on/off state" },
-      ];
-      for (const file of loadAllConfigs().providers) {
-        const plans = file.accounts.map((a) => String(a.planType).toLowerCase()).join("/");
-        items.push({
-          value: file.shortName,
-          label: file.shortName,
-          description: `${providerIdFor(file.shortName)} (${plans})`,
-        });
-      }
-      return items.filter((i) => i.value.startsWith(typed));
-    }
-    // 第 2 层起：候选 value 已含前缀（provider / provider plan）
-    const items: { value: string; label: string; description?: string }[] = [];
-    if (argIndex === 1) {
-      const file = resolveProviderFile(tokens[0]);
-      if (file) {
-        for (const a of file.accounts) {
-          const plan = String(a.planType).toLowerCase();
-          items.push({ value: `${file.shortName} ${plan}`, label: plan, description: a.label });
-        }
-        items.push({ value: `${file.shortName} on`, label: "on", description: "Show all plans of this provider" });
-        items.push({ value: `${file.shortName} off`, label: "off", description: "Hide all plans of this provider" });
-      }
-    } else if (argIndex === 2) {
-      const base = tokens.slice(0, 2).join(" ");
-      items.push({ value: `${base} on`, label: "on", description: "Show" });
-      items.push({ value: `${base} off`, label: "off", description: "Hide" });
-    }
-    return items.filter((i) => i.value.startsWith(typed));
-  }
-
   // ---------- 命令 ----------
 
+  /** 执行一条指令（与命令行参数同构）：解析后切换显隐并刷新状态栏 */
+  async function executeShowUsage(args: string, ctx: any): Promise<void> {
+    const tokens = args.trim().toLowerCase().split(/\s+/).filter(Boolean);
+
+    if (tokens[0] === "status") {
+      const lines = loadAllConfigs()
+        .providers.map((f) => {
+          const plans = f.accounts
+            .map((a) => String(a.planType).toLowerCase())
+            .map((p) => `${p}:${enabled.get(`${providerIdFor(f.shortName)}:${p}`) ? "on" : "off"}`);
+          return `${f.shortName} ${plans.join(" ")}`;
+        })
+        .join(" | ");
+      ctx.ui.notify(lines || "No provider config", "info");
+      return;
+    }
+    if (tokens[0] === "off") {
+      for (const key of [...enabled.keys()]) enabled.set(key, false);
+      usageRightText = "";
+      ctx.ui.notify("Usage display turned off", "info");
+      return;
+    }
+
+    // 解析 [provider] [plan] [on|off|toggle]；多余参数或未知 provider 时报错提示
+    let providerToken: string | undefined;
+    let planToken: string | undefined;
+    let action: "toggle" | "on" | "off" = "toggle";
+    for (const t of tokens) {
+      if (t === "on" || t === "off" || t === "toggle") {
+        action = t;
+      } else if (!providerToken) {
+        providerToken = t;
+      } else if (!planToken) {
+        planToken = t;
+      } else {
+        ctx.ui.notify("Usage: /show-usage [provider] [plan] [on|off] | all | off | status", "warning");
+        return;
+      }
+    }
+    if (providerToken === "all") {
+      providerToken = undefined;
+      action = "on";
+    }
+    if (providerToken && !resolveProviderFile(providerToken)) {
+      const names = loadAllConfigs()
+        .providers.map((p) => p.shortName)
+        .join(", ");
+      ctx.ui.notify(`Unknown provider "${providerToken}". Available: ${names}`, "warning");
+      return;
+    }
+
+    const targets = resolveTargets(providerToken, planToken);
+    if (targets.length === 0) {
+      ctx.ui.notify(
+        `No match${providerToken ? ` for "${providerToken}"` : ""}${planToken ? ` plan "${planToken}"` : ""}`,
+        "warning",
+      );
+      return;
+    }
+
+    // toggle：范围内任一开启则全关，否则全开；显式 on/off 按字面
+    const next =
+      action === "toggle"
+        ? !targets.some((t) => enabled.get(`${t.providerId}:${t.planType}`))
+        : action === "on";
+    for (const t of targets) {
+      const key = `${t.providerId}:${t.planType}`;
+      if (!next) cache.delete(key); // 关闭清缓存，再开即强制刷新
+      enabled.set(key, next);
+    }
+
+    try {
+      await refreshUsageText(true);
+      ctx.ui.notify(
+        anyEnabled()
+          ? `Showing: ${[...enabled.entries()].filter(([, v]) => v).map(([k]) => k.split(":")[1]).join(", ")}`
+          : "Usage display turned off",
+        "info",
+      );
+    } catch (e) {
+      ctx.ui.notify(`Query failed: ${e instanceof Error ? e.message : String(e)}`, "error");
+    }
+  }
+
   pi.registerCommand("show-usage", {
-    description: "Status bar plan usage: /show-usage [provider] [plan] [on|off] | all | off | status",
-    getArgumentCompletions: (prefix) => argumentCompletions(prefix),
+    description: "Show plan usage in status bar (no args opens interactive picker)",
     handler: async (args, ctx) => {
-      const tokens = (args ?? "").trim().toLowerCase().split(/\s+/).filter(Boolean);
-
-      if (tokens[0] === "status") {
-        const lines = loadAllConfigs()
-          .providers.map((f) => {
-            const plans = f.accounts
-              .map((a) => String(a.planType).toLowerCase())
-              .map((p) => `${p}:${enabled.get(`${providerIdFor(f.shortName)}:${p}`) ? "on" : "off"}`);
-            return `${f.shortName} ${plans.join(" ")}`;
-          })
-          .join(" | ");
-        ctx.ui.notify(lines || "No provider config", "info");
-        return;
-      }
-      if (tokens[0] === "off") {
-        for (const key of [...enabled.keys()]) enabled.set(key, false);
-        usageRightText = "";
-        ctx.ui.notify("Usage display turned off", "info");
-        return;
-      }
-
-      // 解析 [provider] [plan] [on|off]；多余参数或未知 provider 时报错提示
-      let providerToken: string | undefined;
-      let planToken: string | undefined;
-      let action: "toggle" | "on" | "off" = "toggle";
-      for (const t of tokens) {
-        if (t === "on" || t === "off" || t === "toggle") {
-          action = t;
-        } else if (!providerToken) {
-          providerToken = t;
-        } else if (!planToken) {
-          planToken = t;
-        } else {
-          ctx.ui.notify("Usage: /show-usage [provider] [plan] [on|off] | all | off | status", "warning");
-          return;
-        }
-      }
-      if (providerToken === "all") {
-        providerToken = undefined;
-        action = "on";
-      }
-      if (providerToken && !resolveProviderFile(providerToken)) {
-        const names = loadAllConfigs()
-          .providers.map((p) => p.shortName)
-          .join(", ");
-        ctx.ui.notify(`Unknown provider "${providerToken}". Available: ${names}`, "warning");
-        return;
-      }
-
-      const targets = resolveTargets(providerToken, planToken);
-      if (targets.length === 0) {
-        ctx.ui.notify(
-          `No match${providerToken ? ` for "${providerToken}"` : ""}${planToken ? ` plan "${planToken}"` : ""}`,
-          "warning",
+      const direct = (args ?? "").trim();
+      // 无参数 → 打开交互式菜单，由菜单返回指令再执行
+      if (!direct) {
+        const providers = loadAllConfigs().providers;
+        const menuArg = await showUsageMenu(ctx, providers, (shortName, plan) =>
+          enabled.get(`${providerIdFor(shortName)}:${plan}`) === true,
         );
+        if (!menuArg) return; // 用户取消
+        await executeShowUsage(menuArg, ctx);
         return;
       }
-
-      // toggle：范围内任一开启则全关，否则全开；显式 on/off 按字面
-      const next =
-        action === "toggle"
-          ? !targets.some((t) => enabled.get(`${t.providerId}:${t.planType}`))
-          : action === "on";
-      for (const t of targets) {
-        const key = `${t.providerId}:${t.planType}`;
-        if (!next) cache.delete(key); // 关闭清缓存，再开即强制刷新
-        enabled.set(key, next);
-      }
-
-      try {
-        await refreshUsageText(true);
-        ctx.ui.notify(
-          anyEnabled()
-            ? `Showing: ${[...enabled.entries()].filter(([, v]) => v).map(([k]) => k.split(":")[1]).join(", ")}`
-            : "Usage display turned off",
-          "info",
-        );
-      } catch (e) {
-        ctx.ui.notify(`Query failed: ${e instanceof Error ? e.message : String(e)}`, "error");
-      }
+      // 带完整参数 → 直接执行（脚本/LLM 调用）
+      await executeShowUsage(direct, ctx);
     },
   });
 
@@ -314,40 +280,6 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", (_event, ctx) => {
     if (ctx.mode !== "tui") return;
-
-    // Tab 在 /show-usage 参数区被 pi 硬编码为强制文件补全：force=true 时原生 Combined
-    // 跳过 slash 参数分支，因此 Tab 弹不出参数候选（只有字符自动触发能弹）。
-    // 这里补一层 wrapper：仅在 force 且光标在参数区时返回参数候选，其余（命令名 Tab、
-    // 字符触发、其他命令）完全委托原生，不影响 pi 其他命令的行为。
-    ctx.ui.addAutocompleteProvider((current) => {
-      /** 光标前的参数区文本（/show-usage 之后含尾空格）；不在参数区返回 null */
-      const argsText = (line: string | undefined, col: number): string | null => {
-        const before = (line ?? "").slice(0, col);
-        const m = before.match(/^\/show-usage\s+(.*)$/);
-        return m ? m[1] : null;
-      };
-      return {
-        async getSuggestions(lines, cursorLine, cursorCol, options) {
-          const args = argsText(lines[cursorLine], cursorCol);
-          // 非 force（字符自动触发）由原生 getArgumentCompletions 处理；不在参数区也委托
-          if (args === null || !options.force) {
-            return current.getSuggestions(lines, cursorLine, cursorCol, options);
-          }
-          const items = argumentCompletions(args);
-          if (items.length === 0) {
-            return current.getSuggestions(lines, cursorLine, cursorCol, options);
-          }
-          // 候选 value 为完整参数路径，prefix 与原生一致（整个参数区），可复用原生替换
-          return { items, prefix: args };
-        },
-        applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
-          return current.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
-        },
-        shouldTriggerFileCompletion(lines, cursorLine, cursorCol) {
-          return current.shouldTriggerFileCompletion?.(lines, cursorLine, cursorCol) ?? true;
-        },
-      };
-    });
 
     // 自动刷新定时器（取各供应商 refreshIntervalSeconds 最小值）；后台静默失败
     if (!refreshTimer) {

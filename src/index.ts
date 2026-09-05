@@ -315,6 +315,40 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", (_event, ctx) => {
     if (ctx.mode !== "tui") return;
 
+    // Tab 在 /show-usage 参数区被 pi 硬编码为强制文件补全：force=true 时原生 Combined
+    // 跳过 slash 参数分支，因此 Tab 弹不出参数候选（只有字符自动触发能弹）。
+    // 这里补一层 wrapper：仅在 force 且光标在参数区时返回参数候选，其余（命令名 Tab、
+    // 字符触发、其他命令）完全委托原生，不影响 pi 其他命令的行为。
+    ctx.ui.addAutocompleteProvider((current) => {
+      /** 光标前的参数区文本（/show-usage 之后含尾空格）；不在参数区返回 null */
+      const argsText = (line: string | undefined, col: number): string | null => {
+        const before = (line ?? "").slice(0, col);
+        const m = before.match(/^\/show-usage\s+(.*)$/);
+        return m ? m[1] : null;
+      };
+      return {
+        async getSuggestions(lines, cursorLine, cursorCol, options) {
+          const args = argsText(lines[cursorLine], cursorCol);
+          // 非 force（字符自动触发）由原生 getArgumentCompletions 处理；不在参数区也委托
+          if (args === null || !options.force) {
+            return current.getSuggestions(lines, cursorLine, cursorCol, options);
+          }
+          const items = argumentCompletions(args);
+          if (items.length === 0) {
+            return current.getSuggestions(lines, cursorLine, cursorCol, options);
+          }
+          // 候选 value 为完整参数路径，prefix 与原生一致（整个参数区），可复用原生替换
+          return { items, prefix: args };
+        },
+        applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
+          return current.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
+        },
+        shouldTriggerFileCompletion(lines, cursorLine, cursorCol) {
+          return current.shouldTriggerFileCompletion?.(lines, cursorLine, cursorCol) ?? true;
+        },
+      };
+    });
+
     // 自动刷新定时器（取各供应商 refreshIntervalSeconds 最小值）；后台静默失败
     if (!refreshTimer) {
       let intervalMs = DEFAULT_REFRESH_MS;
